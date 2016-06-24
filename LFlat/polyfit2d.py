@@ -8,7 +8,7 @@ W = [None for i in range(S)]
 #W[0] is star 0 and has the format [xarr, yarr, oarr, earr, m, delm]
 x0 = [0,1,3,4,2,4,0,1]
 y0 = [3,4,0,1,3,4,0,2]
-o0 = [25.5,25,24,24,25,25,25,70]
+o0 = [25.5,25,24,24,25,25,25,25]
 e0 = np.array([.12,.15,.1,.1,.12,.12])
 
 def magest(o,e,N):
@@ -27,7 +27,7 @@ def magest(o,e,N):
 
 def sigmaclip(a, low = 3, high = 3):
     # copied exactly from scipy.stats.sigmaclip with some variation to keep 
-    # account for the index(es) that are being removed
+    # account for the index/indicies that is/are being removed
     c = np.asarray(a).ravel()
     remove_arr = np.array([]) #indicies that have been removed
     delta = 1
@@ -49,7 +49,7 @@ def func(x,y):
     
 def getfit(x,y,z, pixelx, pixely):
     """
-    This is just for one star/object!
+    This is just for one star/object/data set!
     Parameters:
     x:      array of x pixel values
     y:      array of y pixel values
@@ -121,7 +121,7 @@ plt.show(figtest)
 
 CHIP1YLEN = 2048
 CHIP2YLEN = 2048
-filename = '/Users/dkossakowski/Desktop/testdata.xlsx'
+testfile = '/Users/dkossakowski/Desktop/testdata.xlsx'
 def get_params(filename, chipstring = 'C', xstring = 'D', ystring = 'E', mstring = 'F'):
     import openpyxl
     from openpyxl.cell import column_index_from_string
@@ -149,7 +149,7 @@ def get_params(filename, chipstring = 'C', xstring = 'D', ystring = 'E', mstring
         m_arr = np.append(m_arr, mval)
     return [x_arr, y_arr, m_arr]
     
-x, y, m = get_params(filename)
+x, y, m = get_params(testfile)
 #zfit, Zfit, x, y, X, Y, rsum, res_arr, remove_arr = getfit(x,y,m, np.arange(0,4096,256), range(0,4096,256))
 #print "residual sum: ", rsum
 #figtest1 = plot3d(x,y,np.delete(m,remove_arr),X,Y,Zfit)   

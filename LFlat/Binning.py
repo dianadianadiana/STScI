@@ -1,9 +1,11 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-
 def do_bin(xpixelarr, ypixelarr, xbin, ybin, xarrall, yarrall, marrall, marrallabs):
     """
+    Purpose
+    -------
+                    To take ________ finish this
     Parameters
     ----------
     xpixelarr:      array of the ranging value of pixels in the x direction (1D)
@@ -21,9 +23,7 @@ def do_bin(xpixelarr, ypixelarr, xbin, ybin, xarrall, yarrall, marrall, marralla
     
     Returns
     -------
-    [xbinarr, ybinarr, zzorig, zzfinal, xarrfinal, yarrfinal, delmarrfinal]
-    xbinarr:        (1D for plotting purposes in making a meshgrid if we don't do the fit)
-    ybinarr:        (1D for plotting purposes in making a meshgrid if we don't do the fit)
+    [zzorig, zzfinal, xarrfinal, yarrfinal, delmarrfinal]
     zzorig:         2D array of size xbin * ybin -- the original one -- where if 
                     there is nothing in a bin, 'None' is the element; 
                     and if there are multiple points/magnitudes in the bin, 
@@ -37,13 +37,13 @@ def do_bin(xpixelarr, ypixelarr, xbin, ybin, xarrall, yarrall, marrall, marralla
                     (1D for fitting purposes)                
     
     Notes/Problems/To Do
-    --------------
+    --------------------
     1) for zzfinal, if there is None in a bin, instead of setting the value to 0, 
         maybe we should take the average of the bins around it? Though, this will
         cause more complications with indexing if the bin is on the edge and it
         will also complicate the code by taking more time because it will have 
         to iterate through the 2D array once again
-    2) for xbinarr and ybinarr, they may not be necessarily needed in the return
+    2) resolved -- for xbinarr and ybinarr, they may not be necessarily needed in the return
         statement, but they are useful for visually seeing the mag averages in a 
         3D plot (what you need to do is make meshgrid, xx and yy, using the 
         xbinarr and ybinarr and plot that with the zzfinal 2D array)
@@ -54,42 +54,45 @@ def do_bin(xpixelarr, ypixelarr, xbin, ybin, xarrall, yarrall, marrall, marralla
         how to solve the issue and go around it
      
     """
+    # Initialize an empty 2D array for the binning;
+    # Create xbinarr and ybinarr as the (lengths of xbin and ybin, respectively);
+    #     to make up the bins
+    # Find dx and dy to help later with binning x+dx and y+dy
     zz = np.array([np.array([None for i in range(np.int(xbin))]) for j in range(np.int(ybin))])
     xbin, ybin = np.double(xbin), np.double(ybin)
     xbinarr = np.linspace(np.min(xpixelarr), np.max(xpixelarr), xbin, endpoint = True)
     ybinarr = np.linspace(np.min(ypixelarr), np.max(ypixelarr), ybin, endpoint = True)
     dx, dy = xbinarr[1] - xbinarr[0], ybinarr[1] - ybinarr[0]
     
+    # Go through all the x arrays, y arrays, and magnitude arrays of each star i
+    # Call them xarr, yarr, and marr
+    # Index i is there to obtain the absolute, sure value of the magnitude of
+    #   star i (called mabs), in order to get an array of the differences
+    #   in magnitude (called delmarr)
     for i, (xarr, yarr, marr) in enumerate(zip(xarrall, yarrall, marrall)):
         xarr = np.asarray(xarr)
         yarr = np.asarray(yarr)
         marr = np.asarray(marr)
         mabs = marrallabs[i]
         delmarr = marr - mabs
-        #print '***'
-        #print '***'
-        #print '***'
-        #print '***'
-        #print '***'
-        #print xarr
-        #print yarr
-        #print marr
-        #print mabs
-        #print delmarr
-        #print '***'
+
+        # Each element of xbinarr and ybinarr is the x and y value for a bin. 
+        #    We are looking for the index/indicies that follow the 
+        #    condition that the xarr and yarr are in a bin of x+dx and y+dy. 
+        # The index/indicies that fall in this condition are stored in an array
+        #    called inbin -- then we check if the current bin is empty or already
+        #    has an array in it
         for i, x in enumerate(xbinarr):
             for j, y in enumerate(ybinarr):
-                #print '*********'
-                #print i, j
-                #print x, x+dx
-                #print y, y +dy
                 inbin = np.where((xarr >= x) & (xarr < x + dx) & (yarr >= y) & (yarr < y + dy))[0]
                 if len(inbin): # if inbin exists
                     if zz[i][j] == None: # gives a FutureWarning: comparison to `None` will result in an elementwise object comparison in the future.
                         zz[i][j] = delmarr[inbin]
                     else:
                         zz[i][j] = np.append(zz[i][j], delmarr[inbin])
-                
+    # Now deal with zz and take the averages in each bin 
+    # Need to also build the x arrays, y arrays, and the delta magnitude arrays
+    #     which will be used for the 2D fit          
     zzorig = np.copy(zz)
     zzfinal = np.copy(zz)
     xarrfinal = np.array([]) # 1D need for the fit
@@ -105,34 +108,17 @@ def do_bin(xpixelarr, ypixelarr, xbin, ybin, xarrall, yarrall, marrall, marralla
                 xarrfinal = np.append(xarrfinal, xbinarr[i])
                 yarrfinal = np.append(yarrfinal, ybinarr[j])
                 delmarrfinal = np.append(delmarrfinal, delmavg)
-    return [xbinarr, ybinarr, zzorig, zzfinal, xarrfinal, yarrfinal, delmarrfinal]
-x1 = [ 1598.07,   2042.9 ,   2486.33 ,  1147.49  ,  698.172 , 2043.64  , 2486.17,1142.08 ,   677.55 ]
-y1 = [ 2051.4 ,  2464.57 , 2879.63 , 1691.44,  1280.41 , 1627.14,  1157.47 , 2535.5,3028.69]
-m1 = [ 24.4 , 24.1 , 24.2  ,24.1,  24.2 , 23.8 , 23.5 , 24.7,  24. ]
-xpixel1, ypixel1 = np.arange(4096), np.arange(4096)
-xbin1, ybin1 = 10, 10
-x2, y2 = x1, y1
-m2 = [ 13 , 14 , 13.5  ,14.5,  15.2 , 14.8 , 13.5 , 14.7,  14. ]
-ma1 = 24
-ma2 = 14
-xbinarr, ybinarr, zzorig, zzfinal, xarrfinal, yarrfinal, delmarrfinal = do_bin(xpixel1, ypixel1, xbin1, ybin1, [x1,x2],[y1,y2],[m1,m2],[ma1,ma2])
-
-# NEED TO FIGURE OUT BETTER WAY OF DOING THIS
-def plot3d(X,Y,Z):    
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection='3d')
-    ax.plot_wireframe(X,Y,Z, rstride=1, cstride=1)
-    #ax.scatter(x,y,z, s= 50) # from paper.py
-    ax.set_xlabel('X Pixel')
-    ax.set_ylabel('Y Pixel')
-    return fig
-xx, yy = np.meshgrid(xbinarr, ybinarr, sparse = True, copy=False)
-plt.show(plot3d(xx,yy,zzfinal))
+    return [zzorig, zzfinal, xarrfinal, yarrfinal, delmarrfinal]
 
 def func(x,y):
-    #the function we want to optimize
-    return [x**2, y**2,x*y,x,y,1+x*0]
-def getfit(x, y, z, pixelx, pixely):
+    ''' 
+    Purpose
+    -------
+    The 2D function we want to optimize 
+    '''
+    return [x**2, y**2, x*y, x, y, 1+x*0]
+    
+def getfit(x, y, z, xpixel, ypixel):
     """
     copied from polyfit2d.py
     """
@@ -140,7 +126,7 @@ def getfit(x, y, z, pixelx, pixely):
     y = np.asarray(y)
     z = np.asarray(z)
     
-    xx, yy = np.meshgrid(pixelx, pixely, sparse = True, copy=False) #why copy false??
+    xx, yy = np.meshgrid(xpixel, ypixel, sparse = True, copy=False) #why copy false??
     f = func(x,y)
     fmesh = func(xx,yy)
     A = np.array(f).T
@@ -148,11 +134,11 @@ def getfit(x, y, z, pixelx, pixely):
     coeff, rsum, rank, s = np.linalg.lstsq(A, B)
     
     zfit = np.zeros(len(x))
-    Zfit = [[0 for i in pixelx] for j in pixely]
+    zzfit = [[0 for i in xpixel] for j in ypixel]
     k = 0
     while k < len(coeff):
         zfit += coeff[k]*f[k]
-        Zfit += coeff[k]*fmesh[k]
+        zzfit += coeff[k]*fmesh[k]
         k+=1
     #zfit = coeff[0]*x**2 + coeff[1]*y**2 + ... === coeff[0]*f[0] + ...
     #Zfit = coeff[0]*X**2 + coeff[1]*Y**2 + ... === coeff[0]*fmesh[0] + ...
@@ -161,11 +147,9 @@ def getfit(x, y, z, pixelx, pixely):
         # returns an array of the error in the fit
         return np.abs(zfit-z)
     resarr = get_res(z,zfit)
-    return [zfit, Zfit, x, y, xx, yy, rsum, resarr]
-zfit, Zfit, x, y, xx, yy, rsum, resarr = getfit(xarrfinal,yarrfinal,delmarrfinal, np.arange(0,4096,256), range(0,4096,256))
-
-from mpl_toolkits.mplot3d import Axes3D
-def plot3d1(x,y,z,X,Y,Z):    
+    return [zfit, zzfit, x, y, xx, yy, rsum, resarr]
+    
+def plot3dfit(x,y,z,X,Y,Z):    
     fig = plt.figure()
     ax = fig.add_subplot(111, projection='3d')
     ax.plot_wireframe(X,Y,Z, rstride=1, cstride=1)
@@ -173,4 +157,37 @@ def plot3d1(x,y,z,X,Y,Z):
     ax.set_xlabel('X Pixel')
     ax.set_ylabel('Y Pixel')
     return fig
-#plt.show(plot3d1(x,y,delmarrfinal, xx, yy, Zfit))
+    
+############################    
+CHIP1XLEN = CHIP2XLEN = 4096 
+CHIP1YLEN = CHIP2YLEN = 2048
+
+x1 = [ 1598.07,   2042.9 ,   2486.33 ,  1147.49  ,  698.172 , 2043.64  , 2486.17,1142.08 ,   677.55 ]
+y1 = [ 2051.4 ,  2464.57 , 2879.63 , 1691.44,  1280.41 , 1627.14,  1157.47 , 2535.5,3028.69]
+m1 = [ 24.4 , 24.1 , 24.2  ,24.1,  24.2 , 23.8 , 23.5 , 24.7,  24. ]
+ma1 = 24
+x2, y2 = x1, y1
+m2 = [ 13 , 14 , 13.5  ,14.5,  15.2 , 14.8 , 13.5 , 14.7,  14. ]
+ma2 = 14
+xpixel, ypixel = np.arange(CHIP1XLEN), np.arange(CHIP1YLEN + CHIP2YLEN)
+xbin, ybin = 10, 10
+zzorig, zzfinal, xarrfinal, yarrfinal, delmarrfinal = do_bin(xpixel, ypixel, xbin, ybin, [x1,x2],[y1,y2],[m1,m2],[ma1,ma2])
+zfit, zzfit, x, y, xx, yy, rsum, resarr = getfit(xarrfinal, yarrfinal, delmarrfinal,xpixel=np.linspace(0,CHIP1XLEN,xbin), ypixel=np.linspace(0,CHIP1YLEN+CHIP2YLEN,ybin))
+#plt.show(plot3dfit(x, y, delmarrfinal, xx, yy, zzfit))
+#############################
+
+def plotimg(img,xbin=10,ybin=10):
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+    #ax.set_title('Raw', fontsize = 18)
+    ax.set_xlabel('X Pixel', fontsize = 18);  ax.set_ylabel('Y Pixel', fontsize = 18)
+    extent=(0,4096,0,4096)
+    #ax.set_xlim([0,xbin])
+    #ax.set_ylim([0,ybin])    
+    cax = ax.imshow(np.double(img), cmap = 'gray_r', interpolation='nearest', origin='lower', extent=extent)
+    fig.colorbar(cax, fraction=0.046, pad=0.04)
+    return fig
+imgorig = plotimg(zzfinal)
+plt.show(imgorig)
+imgfit = plotimg(zzfit)
+plt.show(imgfit)
