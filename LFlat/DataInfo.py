@@ -150,7 +150,16 @@ def sigmaclip_dict(stardict, xdict, ydict, mdict, merrdict, low = 3, high = 3):
         ydict[starID] = np.delete(ydict[starID], remove_arr)
         merrdict[starID] = np.delete(merrdict[starID], remove_arr)
     return [stardict, xdict, ydict, mdict, merrdict]
-    
+
+##########################################################
+# In this module, we should have by the end:
+# stardict                 -- holds the star IDs, 
+# xdict, ydict             -- holds the x and y pixel values for a star
+# mdict, merrdict          -- holds the magnitudes and associated magnitude errors 
+# mabsdict, mabserrdict    -- holds the absolute value for the magnitude and its error
+# Note: all dictionaries have array elements except for mabsdict and mabserrdict,
+#   which are just floats
+
 # Get all the data nicely from the file/table into dictionaries
 stardict, xdict, ydict, mdict, merrdict = extract_data(starindexdict, tab)   
 # Filter the stars that don't have enough observations 
@@ -159,16 +168,70 @@ stardict, xdict, ydict, mdict, merrdict = extract_data(starindexdict, tab)
 #   by sigma clipping them
 low, high = 3, 3
 stardict, xdict, ydict, mdict, merrdict = sigmaclip_dict(stardict, xdict, ydict, mdict, merrdict, low, high)
+# Create dictionaries for the absolute magnitude of each star and the error for
+#   that absolute magnitude
+# Absolute magnitude will just be the mean of all the magnitudes for that star
+# The error is the the quadratic error ex. (e1^2 + e2^2 + .. + eN^2)^(1/2) / N
+mabsdict = {}
+mabserrdict = {}
+for star in stardict:
+    mabsdict[star] = np.mean(mdict[star])
+    mabserrdict[star] = np.sqrt(np.sum(merrdict[star]**2)) / len(merrdict[star])
+##########################################################   
 
-
-################ TO DO ################
-# need to make dictionaries for the absolute values of magnitude for each star
-#     and the error that comes with those 
-
-
-
-
+def extract_out(stardict, xdict, ydict, mdict, merrdict, mabsdict, mabserrdict): 
+    """
+    Purpose
+    -------
+    Everything is in a dictionary and this function extracts all the information
+    into arrays so that the info can be 'easier' to use
     
+    Parameters
+    ----------
+    stardict:                holds the star IDs, 
+    xdict, ydict:            holds the x and y pixel values for a star
+    mdict, merrdict:         holds the magnitudes and associated magnitude errors 
+    mabsdict, mabserrdict:   holds the absolute value for the magnitude and its error 
+    
+    Note: all of them have array values except for mabsdict and mabserrdict
+    
+    Returns
+    -------
+    [xall, yall, delmall, delmerrall, mall, merrall, mabsall, mabserrall]
+    xall, yall:              all of the x and y pixel points
+    delmall, delmerrall:     all of the respective delta magnitudes and their errors
+    mall, merrall:           all of the observed magnitudes and their errors
+    mabsall, abserrall:      all of the absolute magnitudes and their errors
+    
+    So if looking at certain index i, xall[i], yall[i], delmall[i], .. etc. all
+    correspond to that point of information, which can be easier to use/to index
+    """
+    xall = np.array([])
+    yall = np.array([])
+    mall = np.array([])
+    merrall = np.array([])
+    mabsall = np.array([])
+    mabserrall = np.array([])
+    
+    delmall = np.array([])
+    delmerrall = np.array([])
+    for star in stardict:
+        xall = np.append(xall, [x for x in xdict[star]])
+        yall = np.append(yall, [y for y in ydict[star]])
+        mall = np.append(mall, [m for m in mdict[star]])
+        merrall = np.append(merrall, [merr for merr in merrdict[star]])
+        
+        mabs, mabserr = mabsdict[star], mabserrdict[star]
+        mabsall = np.append(mabsall, np.ones(len(mdict[star])) * mabs)
+        mabserrall = np.append(mabserrall, np.ones(len(merrdict[star])) * mabserr)
+        
+        delmarr = mdict[star] - mabs # array of delta mag
+        delmall = np.append(delmall, [delm for delm in delmarr])
+        delmerrall = np.append(delmerrall, [np.sqrt(merr**2 + mabserr**2) for merr in merrdict[star]])
+    return [xall, yall, delmall, mall, merrall, mabsall, mabserrall, delmerrall] 
+    
+xall, yall, delmall, delmerrall, mall, merrall, mabsall, mabserrall = extract_out(stardict, xdict, ydict, mdict, merrdict, mabsdict, mabserrdict)
 
-    
-    
+def printnicely(dictionary):
+    for key in dictionary:
+        print key, dictionary[key]
