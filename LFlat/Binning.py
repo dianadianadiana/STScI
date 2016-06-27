@@ -8,8 +8,8 @@ def do_bin(xpixelarr, ypixelarr, xbin, ybin, xarrall, yarrall, marrall, marralla
                     To take ________ finish this
     Parameters
     ----------
-    xpixelarr:      array of the ranging value of pixels in the x direction (1D)
-    ypixelarr:      array of the ranging value of pixels in the y direction (1D)
+    xpixelarr:      array of the ranging values of pixels in the x direction (1D)
+    ypixelarr:      array of the ranging values of pixels in the y direction (1D)
     xbin:           number of bins in the x direction
     ybin:           number of bins in the y direction
     xarrall:        array of arrays: Each element in xarrall corresponds to the 
