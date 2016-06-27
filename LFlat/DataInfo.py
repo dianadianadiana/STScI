@@ -18,43 +18,15 @@ types = [int, int, int, np.float64, np.float64, np.float64, np.float64,
 tab = Table(data, names=names, dtype=types)
 
 # Build up the indicies for each star in the table and store in a dictionary
-# keys: star ID 
-# values: indicies of the rows in tab corresponding to star ID
+#     keys: star ID 
+#     values: indicies of the rows in tab corresponding to star ID
 # Ex: tab[starindexdict[starID] gives the rows corresponding to the star ID
 starindexdict = {}
-for row in tab[1000:2000]:
+for row in tab[1000:1010]:
     try:
         starindexdict[row['id']]
     except KeyError:
         starindexdict[row['id']] = np.where(tab['id'] == row['id'])[0]
-
-def remove_stars(stararr, somedict, min_num_obs = 3):
-    """ 
-    *** Helper function for the extract_data function ***
-    Purpose
-    -------
-    Removes the stars that do not have the min_num_obs observations
-    
-    Parameters
-    ----------
-    stararr:        The array of all the star IDs
-    somedict:       The dictionary where the keys are the star IDs and the values
-                    depend on which dictionary is passed in
-    min_num_obs:    The minimum number of observations required for a star to have
-    
-    Returns
-    -------
-    somedict:       The same dictionary that was passed in but now filtered 
-    NOTES
-    *this is slow if we are iterating through every dict, I want to instead find 
-    the stars that we should remove and then remove them from the other dicts
-    (but idk how to and i will figure it out later)
-    *change the name of somedict lol
-    """
-    for star in stararr:
-        if len(somedict[star]) <= 3:
-            somedict.pop(star)
-    return somedict
     
 def extract_data(indexdict, datatab):
     '''
@@ -77,9 +49,10 @@ def extract_data(indexdict, datatab):
                     indicies
     Returns
     -------
-    [stararr, xdict, ydict, mdict, merrdict]
-    stararr:        An array of all the star IDs (will be useful later on when
-                    iterating over all the stars)
+    [stardict, xdict, ydict, mdict, merrdict] -- all as were in the files; they
+        will be filtered through
+    stardict:       A dictionary where the keys are the star IDs and the values
+                    are also the star IDs -- useful in iterating through the stars
     xdict:          A dictionary where the keys are the star IDs and the values
                     are the x pixel values corresponding to that star ID
     ydict:          A dictionary where the keys are the star IDs and the values
@@ -89,6 +62,8 @@ def extract_data(indexdict, datatab):
     merrdict:       A dictionary where the keys are the star IDs and the values
                     are the magnitude errors corresponding to that star ID        
     '''
+    
+    stardict = {}
     xdict = {}
     ydict = {}
     mdict = {}
@@ -114,18 +89,83 @@ def extract_data(indexdict, datatab):
             yarr = np.append(yarr, ypixel) if chip == 2 else np.append(yarr, ypixel + CHIP2YLEN)
             marr = np.append(marr, mag)
             merrarr = np.append(merrarr, magerr)
+        stardict[starID] = starID
         xdict[starID] = xarr
         ydict[starID] = yarr
         mdict[starID] = marr
         merrdict[starID] = merrarr
-    stararr = indexdict.keys()
-    xdict = remove_stars(stararr, xdict, 3)
-    ydict = remove_stars(stararr, ydict, 3)
-    mdict = remove_stars(stararr, mdict, 3)
-    merrdict = remove_stars(stararr, merrdict, 3)
-    return [stararr, xdict, ydict, mdict, merrdict]
+    return [stardict, xdict, ydict, mdict, merrdict]
+    
+def remove_stars(dicts, min_num_obs = 3):
+    """            *** Filter function ***
+    Purpose
+    -------
+    Removes the stars with less than a min num of observations from each dictionary 
+    
+    Parameters
+    ----------
+    dicts:          An array of dictionaries where the keys are the star IDs and 
+                    the values depend on each dictionary; each dictionary will 
+                    be filtered; ASSUME that the 0th dictionary is the star 
+                    dictionary
+    min_num_obs:    The minimum number of observations required for a star to have
+    
+    Returns
+    -------
+    dicts:          The filtered dictionaries that were passed in
+    removestarlist: The list of stars that need to be removed since they don't
+                    have enough observations -- returned just in case we want
+                    to know how many were filtered out
+    """
+    stararr = dicts[0].keys() # ASSUME that stardict is the 0th element
+    otherdict = dicts[1]
+    removestarlist = [star for star in stararr if len(otherdict[star]) <= min_num_obs]
+    for star in removestarlist:
+        for somedict in dicts:
+            somedict.pop(star)
+    return dicts, removestarlist
+    
+def sigmaclip(a, low = 3, high = 3):
+    # copied exactly from scipy.stats.sigmaclip with some variation to keep 
+    # account for the index/indicies that is/are being removed
+    c = np.asarray(a).ravel()
+    remove_arr = np.array([]) #indicies that have been removed
+    delta = 1
+    while delta:
+        c_std = c.std()
+        c_mean = c.mean()
+        size = c.size
+        critlower = c_mean - c_std*low
+        critupper = c_mean + c_std*high
+        removetemp = np.where(c < critlower) and np.where(c > critupper)
+        remove_arr = np.append(remove_arr, removetemp)
+        c = np.delete(c, removetemp)
+        delta = size-c.size
+    return c, remove_arr
+    
+def sigmaclip_dict(stardict, xdict, ydict, mdict, merrdict, low = 3, high = 3):
+    for starID in stardict:
+        mdict[starID], remove_arr = sigmaclip(mdict[starID], low, high)
+        xdict[starID] = np.delete(xdict[starID], remove_arr)
+        ydict[starID] = np.delete(ydict[starID], remove_arr)
+        merrdict[starID] = np.delete(merrdict[starID], remove_arr)
+    return [stardict, xdict, ydict, mdict, merrdict]
+    
+# Get all the data nicely from the file/table into dictionaries
+stardict, xdict, ydict, mdict, merrdict = extract_data(starindexdict, tab)   
+# Filter the stars that don't have enough observations 
+[stardict, xdict, ydict, mdict, merrdict], removestarlist = remove_stars([stardict, xdict, ydict, mdict, merrdict], 3)
+# Look at each star and make sure that observations would not mess up a fit
+#   by sigma clipping them
+low, high = 3, 3
+stardict, xdict, ydict, mdict, merrdict = sigmaclip_dict(stardict, xdict, ydict, mdict, merrdict, low, high)
 
-stararr, xdict, ydict, mdict, merrdict = extract_data(starindexdict, tab)
+
+################ TO DO ################
+# need to make dictionaries for the absolute values of magnitude for each star
+#     and the error that comes with those 
+
+
 
 
     
