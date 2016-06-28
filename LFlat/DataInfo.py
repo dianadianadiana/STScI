@@ -1,5 +1,8 @@
 import numpy as np
 from astropy.table import Table
+import time
+
+start_time = time.time()
 
 CHIP1XLEN = CHIP2XLEN = 4096 
 CHIP1YLEN = CHIP2YLEN = 2048
@@ -22,7 +25,7 @@ tab = Table(data, names=names, dtype=types)
 #     values: indicies of the rows in tab corresponding to star ID
 # Ex: tab[starindexdict[starID] gives the rows corresponding to the star ID
 starindexdict = {}
-for row in tab[1000:1010]:
+for row in tab[:]:
     try:
         starindexdict[row['id']]
     except KeyError:
@@ -177,6 +180,7 @@ mabserrdict = {}
 for star in stardict:
     mabsdict[star] = np.mean(mdict[star])
     mabserrdict[star] = np.sqrt(np.sum(merrdict[star]**2)) / len(merrdict[star])
+print "%s seconds" % (time.time() - start_time) # For everything above to run ~ 30 seconds
 ##########################################################   
 
 def extract_out(stardict, xdict, ydict, mdict, merrdict, mabsdict, mabserrdict): 
@@ -230,7 +234,7 @@ def extract_out(stardict, xdict, ydict, mdict, merrdict, mabsdict, mabserrdict):
         delmerrall = np.append(delmerrall, [np.sqrt(merr**2 + mabserr**2) for merr in merrdict[star]])
     return [xall, yall, delmall, mall, merrall, mabsall, mabserrall, delmerrall] 
     
-xall, yall, delmall, delmerrall, mall, merrall, mabsall, mabserrall = extract_out(stardict, xdict, ydict, mdict, merrdict, mabsdict, mabserrdict)
+#xall, yall, delmall, delmerrall, mall, merrall, mabsall, mabserrall = extract_out(stardict, xdict, ydict, mdict, merrdict, mabsdict, mabserrdict)
 
 def printnicely(dictionary):
     for key in dictionary:
