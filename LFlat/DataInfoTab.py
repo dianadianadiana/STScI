@@ -23,7 +23,6 @@ tab.remove_columns(['d1','d2','d3']) # remove the dummy columns
 tab.sort(['id'])                     # sort the table by starID
 starIDarr = np.unique(tab['id'])     # collect all the star IDs
 
-
 #####################################################
 ################ Filter Functions ###################
 #####################################################
@@ -65,29 +64,37 @@ def remove_stars_tab(tab, starIDarr, min_num_obs = 4):
     tab.remove_rows(removetabindicies)
     return tab, starIDarr, removestarlist
 
-def sigmaclip(c, low = 3, high = 3):
+def sigmaclip(z, low = 3, high = 3):
     # copied exactly from scipy.stats.sigmaclip with some variation to keep 
     # account for the index(es) that is(are) being removed
-    c = np.asarray(c).ravel()
-    remove_arr = np.array([]) #indicies that have been removed
+    c = np.asarray(z).ravel() # this will be changing
+    c1 = np.copy(c) # the very original array
     delta = 1
+    removevalues = np.array([])
     while delta:
         c_std = c.std()
         c_mean = c.mean()
         size = c.size
         critlower = c_mean - c_std*low
         critupper = c_mean + c_std*high
-        removetemp = np.where(c < critlower) and np.where(c > critupper)
-        remove_arr = np.append(remove_arr, removetemp)
+        removetemp = np.where(c < critlower)[0] and np.where(c > critupper)[0]
+        removevalues = np.append(removevalues, c[removetemp])
         c = np.delete(c, removetemp)
-        delta = size-c.size
-    return c, remove_arr
+        delta = size - c.size
+    removevalues = np.unique(removevalues)
+    remove_arr = np.array([])
+    for val2remove in removevalues:
+        remove_arr = np.append(remove_arr, np.where(c1 == val2remove)[0])
+    remove_arr = map(int, remove_arr)
+    return remove_arr
 
-def sigmaclip_tab(tab, starIDarr, low = 3, high = 3):
+def sigmaclip_starmag(tab, starIDarr, low = 3, high = 3):
     """
     Purpose
     -------
-    To get rid of any observations that are not within a low sigma and high simga
+    To get rid of any observations for each star that are not within a low sigma 
+    and high simga (Ex. a star has mag values [24,24.5,25,25,25,50] --> the 
+    observation with 50 will be removed from the table
     
     Paramters
     ---------
@@ -102,16 +109,61 @@ def sigmaclip_tab(tab, starIDarr, low = 3, high = 3):
     starIDarr:          The array with all the star IDs; should not be modified
                         but returned for consistency
     """
+    
     removetabindices = np.array([])
     for star in starIDarr:
         starindexes = np.where(tab['id'] == star)[0]
         currmags = tab[starindexes]['mag']
-        currmags, remove_arr = sigmaclip(currmags, low, high)
-        remove_arr = map(int, remove_arr)
+        remove_arr = sigmaclip(np.abs(currmags), low, high)
         removetabindicies = np.append(removetabindices, starindexes[remove_arr])
     removetabindicies = map(int, removetabindicies)
     tab.remove_rows(removetabindicies)
     return tab, starIDarr
+
+def sigmaclip_delmagall(tab, starIDarr, low = 3, high = 3):
+    delmarr = tab['mag'] - tab['absmag']
+    delmarr = np.asarray(delmarr)
+    print min(delmarr), max(delmarr)
+    # sigma clipping the delta magnitudes
+    remove_arr = sigmaclip(delmarr, low, high)
+    tab.remove_rows(remove_arr)
+    return tab, starIDarr
+    
+def bin_filter(tab, xpixelarr, ypixelarr, xbin, ybin, low = 3, high = 3):
+    # Initialize an empty 2D array for the binning;
+    # Create xbinarr and ybinarr as the (lengths of xbin and ybin, respectively);
+    #     to make up the bins
+    # Find dx and dy to help later with binning x+dx and y+dy
+    # zz is a 2D array that can be used for imshow
+    zz = np.array([np.array([None for i in range(np.int(xbin))]) for j in range(np.int(ybin))])
+    zztabindex = np.copy(zz)
+    xbin, ybin = np.double(xbin), np.double(ybin)
+    xbinarr = np.linspace(np.min(xpixelarr), np.max(xpixelarr), xbin, endpoint = False)
+    ybinarr = np.linspace(np.min(ypixelarr), np.max(ypixelarr), ybin, endpoint = False)
+    dx, dy = xbinarr[1] - xbinarr[0], ybinarr[1] - ybinarr[0]
+    
+    xall = tab['x']
+    yall = [row['y'] if row['chip'] == 2 else row['y'] + CHIP2YLEN for row in tab]
+    delmall = tab['mag'] - tab['absmag']
+    xall = np.asarray(xall)
+    yall = np.asarray(yall)
+    delmall = np.asarray(delmall)
+    
+    indexestoremove = np.array([])
+    for i, x in enumerate(xbinarr):
+        for j, y in enumerate(ybinarr):
+            inbin = np.where((xall >= x) & (xall < x + dx) & (yall >= y) & (yall < y + dy))[0]
+            if len(inbin): # if inbin exists
+                remove_arr = sigmaclip(delmall[inbin], low, high)
+                indextoremove = np.append(indexestoremove, inbin[remove_arr])
+                inbin = np.delete(inbin, remove_arr)
+                zztabindex[i][j] = inbin
+                zz[i][j] = np.mean(delmall[inbin])
+            else:
+                zz[i][j] = 0
+    indextoremove = map(int, indexestoremove)
+    tab.remove_rows(indextoremove)
+    return [tab, zz, zztabindex]
 #####################################################
 #####################################################
 #####################################################
@@ -120,21 +172,24 @@ def sigmaclip_tab(tab, starIDarr, low = 3, high = 3):
 #####################################################
 ################# Apply Filters #####################
 #####################################################
-print 'Len of tab and starIDarr before anything'
-print len(tab)
-print len(starIDarr) 
-print 'Len of tab and starIDarr after 1st min_num_obs'
-tab, starIDarr, removestarlist = remove_stars_tab(tab, starIDarr, min_num_obs = 3)
-print len(tab)
-print len(starIDarr) 
-tab, starIDarr = sigmaclip_tab(tab, starIDarr[:], low = 3, high = 3)
-print 'Len of tab and starIDarr after sigmaclipping'
-print len(tab)
-print len(starIDarr)
-tab, starIDarr, removestarlist = remove_stars_tab(tab, starIDarr, min_num_obs = 3)
-print 'Len of tab and starIDarr after 2nd min_num_obs'
-print len(tab)
-print len(starIDarr)
+#print 'Len of tab and starIDarr before anything'
+#print len(tab)
+#print len(starIDarr) 
+#print 'Len of tab and starIDarr after 1st min_num_obs'
+#tab, starIDarr, removestarlist = remove_stars_tab(tab, starIDarr, min_num_obs = 4)
+#print len(tab)
+#print len(starIDarr) 
+#tab, starIDarr = sigmaclip_starmag(tab, starIDarr, low = 3, high = 3)
+#print 'Len of tab and starIDarr after sigmaclipping'
+#print len(tab)
+#print len(starIDarr)
+#tab, starIDarr, removestarlist = remove_stars_tab(tab, starIDarr, min_num_obs = 4)
+#print 'Len of tab and starIDarr after 2nd min_num_obs'
+#print len(tab)
+#print len(starIDarr)
+#xpixelarr, ypixelarr = np.arange(CHIP1XLEN), np.arange(CHIP1YLEN + CHIP2YLEN)
+#xbin, ybin = 10, 10 
+#tab, zz, zztabindex = bin_filter(tab, xpixelarr, ypixelarr, xbin, ybin, low=3, high=3)
 #####################################################
 #####################################################
 #####################################################
@@ -159,12 +214,15 @@ def make_absmag(tab, starIDarr):
     tab:                The updated Astropy table with abs mag and its error
     starIDarr:          The array with all the star IDs; should not be modified
                         but returned for consistency
-    
+    Notes
+    -----
+    1) Absolute magnitude will just be the mean of all the magnitudes for that star
+    2) The error is the the quadratic error ex. (e1^2 + e2^2 + .. + eN^2)^(1/2) / N
     """
     # Create two new columns
     filler = np.arange(len(tab))
-    c1 = Column(data = filler, name = 'abs mag')
-    c2 = Column(data = filler, name = 'abs magerr')
+    c1 = Column(data = filler, name = 'absmag')
+    c2 = Column(data = filler, name = 'absmagerr')
     tab.add_column(c1)
     tab.add_column(c2)
 
@@ -175,12 +233,12 @@ def make_absmag(tab, starIDarr):
         absmag = np.mean(currmags)                      # the absolute magnitude
         
         for index in starindexes:                       # input the abs mag and abs magerr
-            tab[index]['abs mag'] = absmag
-            tab[index]['abs magerr'] = np.sqrt(np.sum(currmagerr**2)) / len(currmagerr)        
+            tab[index]['absmag'] = absmag
+            tab[index]['absmagerr'] = np.sqrt(np.sum(currmagerr**2)) / len(currmagerr)        
     return tab, starIDarr
-
-tab, starIDarr = make_absmag(tab, starIDarr)
-print "%s seconds" % (time.time() - start_time) # For everything to run ~ 111 seconds
+    
+#tab, starIDarr = make_absmag(tab, starIDarr)
+#print "%s seconds for filtering the data" % (time.time() - start_time) # For everything to run ~ 111 seconds
 
 #####################################################
 #####################################################
@@ -192,7 +250,7 @@ print "%s seconds" % (time.time() - start_time) # For everything to run ~ 111 se
 ##################### OPTIONAL ######################
 #####################################################
     
-def extract_data(starIDarr, datatab):
+def extract_data_dicts(starIDarr, datatab):
     '''
     Purpose
     -------
@@ -257,11 +315,11 @@ def extract_data(starIDarr, datatab):
         ydict[starID] = yarr
         mdict[starID] = marr
         merrdict[starID] = merrarr
-        absmdict[starID] = datatab[starindexes[0]]['abs mag']
-        absmerrdict[starID] = datatab[starindexes[0]]['abs magerr']
+        absmdict[starID] = datatab[starindexes[0]]['absmag']
+        absmerrdict[starID] = datatab[starindexes[0]]['absmagerr']
     return [stardict, xdict, ydict, mdict, merrdict, absmdict, absmerrdict]
     
-#stardict, xdict, ydict, mdict, merrdict, absmdict, absmerrdict = extract_data(starIDarr, tab)
+#stardict, xdict, ydict, mdict, merrdict, absmdict, absmerrdict = extract_data_dicts(starIDarr, tab)
 
 #####################################################
 #####################################################
