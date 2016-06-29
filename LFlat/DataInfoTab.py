@@ -22,7 +22,7 @@ tab = Table(data, names=names, dtype=types)
 tab.remove_columns(['d1','d2','d3']) # remove the dummy columns  
 tab.sort(['id'])                     # sort the table by starID
 starIDarr = np.unique(tab['id'])     # collect all the star IDs
-
+tab = tab[1000:2000]
 #####################################################
 ################ Filter Functions ###################
 #####################################################
@@ -144,7 +144,7 @@ def sigmaclip_delmagall(tab, starIDarr, low = 3, high = 3):
     starIDarr:          The array with all the star IDs; should not be modified
                         but returned for consistency
     '''
-    delmarr = tab['mag'] - tab['absmag']
+    delmarr = tab['mag'] - tab['avgmag']
     delmarr = np.asarray(delmarr)
     # sigma clipping the delta magnitudes
     remove_arr = sigmaclip(delmarr, low, high)
@@ -198,7 +198,7 @@ def bin_filter(tab, xpixelarr, ypixelarr, xbin, ybin, low = 3, high = 3):
     # Take out all the information from the table
     xall = tab['x']
     yall = [row['y'] if row['chip'] == 2 else row['y'] + CHIP2YLEN for row in tab]
-    delmall = tab['mag'] - tab['absmag']
+    delmall = tab['mag'] - tab['avgmag']
     xall = np.asarray(xall)
     yall = np.asarray(yall)
     delmall = np.asarray(delmall)
@@ -260,7 +260,17 @@ def bin_filter(tab, xpixelarr, ypixelarr, xbin, ybin, low = 3, high = 3):
 #####################################################
 ########### Find the Absolute Magnitude #############
 #####################################################
-def make_absmag(tab, starIDarr):
+def convertmag2flux(mag):
+    ''' Converts a magnitude to a flux 
+    -- assume zero-point mag is 0 and flux is a constant '''
+    return 10**(.4*-mag)
+    
+def convertflux2mag(flux):
+    ''' Converts a flux into a magnitude
+    -- assume zero-point mag is 0 and flux is a constant ''' 
+    return -2.5 * np.log10(flux)
+    
+def make_avgmag(tab, starIDarr):
     """
     Purpose
     -------
@@ -283,23 +293,46 @@ def make_absmag(tab, starIDarr):
     """
     # Create two new columns
     filler = np.arange(len(tab))
-    c1 = Column(data = filler, name = 'absmag')
-    c2 = Column(data = filler, name = 'absmagerr')
+    
+    c1 = Column(data = filler, name = 'avgmag')
+    c2 = Column(data = filler, name = 'avgmagerr')
+    c3 = Column(data = filler, name = 'flux')
+    c4 = Column(data = filler, name = 'fluxerr')
+    c5 = Column(data = filler, name = 'avgflux')
+    c6 = Column(data = filler, name = 'avgfluxerr')
     tab.add_column(c1)
     tab.add_column(c2)
-
+    tab.add_column(c3)
+    tab.add_column(c4)
+    tab.add_column(c5)
+    tab.add_column(c6)
+    
     for star in starIDarr:
         starindexes = np.where(tab['id'] == star)[0]    # the indexes in the tab of where the star is
-        currmags = tab[starindexes]['mag']              # the current magnitudes (type = <class 'astropy.table.column.Column'>)
+        currmags = np.array(tab[starindexes]['mag'])    # the current magnitudes 
         currmagerr = tab[starindexes]['magerr']         # the current magnitude errors (type = class <'astropy.table.column.Column'>)
-        absmag = np.mean(currmags)                      # the absolute magnitude
+        currfluxes = convertmag2flux(currmags)          # the current fluxes
+        currfluxerr = np.array([2.303*flux*magerr for flux, magerr in zip(currfluxes, currmagerr)])
         
-        for index in starindexes:                       # input the abs mag and abs magerr
-            tab[index]['absmag'] = absmag
-            tab[index]['absmagerr'] = np.sqrt(np.sum(currmagerr**2)) / len(currmagerr)        
+        avgmag = convertflux2mag(np.mean(currfluxes))   # the absolute magnitude
+        avgmagerr = np.sqrt(np.sum(currmagerr**2)) / len(currmagerr) 
+        avgfluxerr = np.sqrt(np.sum(currfluxerr**2)) / len(currfluxerr) 
+        
+        
+        for i, index in enumerate(starindexes):         # input the abs mag and abs magerr
+            print currfluxes[i]
+            tab[index]['avgmag'] = avgmag
+            tab[index]['avgmagerr'] = avgmagerr   
+            tab[index]['flux'] = currfluxes[i]
+            tab[index]['fluxerr'] = currfluxerr[i]
+            tab[index]['avgflux'] = np.mean(currfluxes)
+            tab[index]['avgfluxerr'] = avgfluxerr
+
+                 
     return tab, starIDarr
-    
-#tab, starIDarr = make_absmag(tab, starIDarr)
+tab, starIDarr, removestarlist = remove_stars_tab(tab, starIDarr, min_num_obs = 4)
+print tab   
+tab, starIDarr = make_avgmag(tab, starIDarr)
 #print "%s seconds for filtering the data" % (time.time() - start_time) # For everything to run ~ 111 seconds
 
 #####################################################
@@ -377,10 +410,10 @@ def extract_data_dicts(starIDarr, datatab):
         ydict[starID] = yarr
         mdict[starID] = marr
         merrdict[starID] = merrarr
-        absmdict[starID] = datatab[starindexes[0]]['absmag']
-        absmerrdict[starID] = datatab[starindexes[0]]['absmagerr']
+        absmdict[starID] = datatab[starindexes[0]]['avgmag']
+        absmerrdict[starID] = datatab[starindexes[0]]['avgmagerr']
     return [stardict, xdict, ydict, mdict, merrdict, absmdict, absmerrdict]
-    
+
 #stardict, xdict, ydict, mdict, merrdict, absmdict, absmerrdict = extract_data_dicts(starIDarr, tab)
 
 #####################################################
