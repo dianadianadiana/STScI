@@ -64,23 +64,27 @@ def remove_stars_tab(tab, starIDarr, min_num_obs = 4):
     tab.remove_rows(removetabindicies)
     return tab, starIDarr, removestarlist
 
-def sigmaclip(z, low = 3, high = 3):
+def sigmaclip(z, low = 3, high = 3, num = 5):
+    
     # copied exactly from scipy.stats.sigmaclip with some variation to keep 
     # account for the index(es) that is(are) being removed
     c = np.asarray(z).ravel() # this will be changing
     c1 = np.copy(c) # the very original array
     delta = 1
     removevalues = np.array([])
-    while delta:
+    count = 0
+    while delta and count < num:
         c_std = c.std()
         c_mean = c.mean()
         size = c.size
         critlower = c_mean - c_std*low
         critupper = c_mean + c_std*high
-        removetemp = np.where(c < critlower)[0] and np.where(c > critupper)[0]
+        removetemp = np.where(c < critlower)[0]
+        removetemp = np.append(removetemp, np.where(c > critupper)[0])
         removevalues = np.append(removevalues, c[removetemp])
         c = np.delete(c, removetemp)
         delta = size - c.size
+        count += 1
     removevalues = np.unique(removevalues)
     remove_arr = np.array([])
     for val2remove in removevalues:
@@ -92,7 +96,7 @@ def sigmaclip_starmag(tab, starIDarr, low = 3, high = 3):
     """
     Purpose
     -------
-    To get rid of any observations for each star that are not within a low sigma 
+    To remove any observations for each star that are not within a low sigma 
     and high simga (Ex. a star has mag values [24,24.5,25,25,25,50] --> the 
     observation with 50 will be removed from the table
     
@@ -121,27 +125,77 @@ def sigmaclip_starmag(tab, starIDarr, low = 3, high = 3):
     return tab, starIDarr
 
 def sigmaclip_delmagall(tab, starIDarr, low = 3, high = 3):
+    '''
+    Purpose
+    -------
+    To remove any observations in the data set as a whole whose delta magnitude 
+    is not within a certain sigma
+    
+    Paramters
+    ---------
+    tab:                The Astropy table with all the information
+    starIDarr:          The array of unique star IDs in the table [not used] 
+    low:                The bottom cutoff (low sigma); default is 3
+    high:               The top cutoff (high sigma); default is 3
+        
+    Returns
+    -------
+    tab:                The updated Astropy table with obscure observations removed
+    starIDarr:          The array with all the star IDs; should not be modified
+                        but returned for consistency
+    '''
     delmarr = tab['mag'] - tab['absmag']
     delmarr = np.asarray(delmarr)
-    print min(delmarr), max(delmarr)
     # sigma clipping the delta magnitudes
     remove_arr = sigmaclip(delmarr, low, high)
     tab.remove_rows(remove_arr)
     return tab, starIDarr
     
 def bin_filter(tab, xpixelarr, ypixelarr, xbin, ybin, low = 3, high = 3):
+    '''
+    Purpose
+    -------
+    
+    Parameters
+    ----------
+    tab:                The Astropy table with all the information
+    xpixelarr:          Array of the ranging values of pixels in the x direction (1D)
+    ypixelarr:          Array of the ranging values of pixels in the y direction (1D)
+    xbin:               Number of bins in the x direction
+    ybin:               Number of bins in the y direction
+    low:                The bottom cutoff (low sigma); default is 3
+    high:               The top cutoff (high sigma); default is 3
+    
+    Returns
+    -------
+    [tab, zz, zztabindex]
+    tab:                The updated Astropy table with observations removed if
+                        didn't fit well in a bin
+    zz:                 2D array of size xbin * ybin -- the final one -- where the 
+                        averages of each bin are taken, and if there was nothing in 
+                        a bin, the average is set to 0
+    zzdelm:             2D array of size xbin * ybin -- in each bin, there 
+                        is an array of the delta magnitudes -- this is returned 
+                        in case we want to see the values of delta mag in a bin
+    zztabindex:         2D array of size xbin * ybin -- in each bin, there 
+                        is an array of the indexes that correspond to tab (equals
+                        None if no array) -- this is returned in case we want 
+                        to know which indexes of the tab belong in a bin
+    '''
     # Initialize an empty 2D array for the binning;
     # Create xbinarr and ybinarr as the (lengths of xbin and ybin, respectively);
     #     to make up the bins
     # Find dx and dy to help later with binning x+dx and y+dy
     # zz is a 2D array that can be used for imshow
     zz = np.array([np.array([None for i in range(np.int(xbin))]) for j in range(np.int(ybin))])
+    zzdelm = np.copy(zz)
     zztabindex = np.copy(zz)
     xbin, ybin = np.double(xbin), np.double(ybin)
     xbinarr = np.linspace(np.min(xpixelarr), np.max(xpixelarr), xbin, endpoint = False)
     ybinarr = np.linspace(np.min(ypixelarr), np.max(ypixelarr), ybin, endpoint = False)
     dx, dy = xbinarr[1] - xbinarr[0], ybinarr[1] - ybinarr[0]
-    
+
+    # Take out all the information from the table
     xall = tab['x']
     yall = [row['y'] if row['chip'] == 2 else row['y'] + CHIP2YLEN for row in tab]
     delmall = tab['mag'] - tab['absmag']
@@ -149,21 +203,29 @@ def bin_filter(tab, xpixelarr, ypixelarr, xbin, ybin, low = 3, high = 3):
     yall = np.asarray(yall)
     delmall = np.asarray(delmall)
     
-    indexestoremove = np.array([])
+    indexestoremove = np.array([])      # An array that will hold all the indexes 
+                                        # that will need to be removed from tab
     for i, x in enumerate(xbinarr):
         for j, y in enumerate(ybinarr):
             inbin = np.where((xall >= x) & (xall < x + dx) & (yall >= y) & (yall < y + dy))[0]
             if len(inbin): # if inbin exists
+                # ex. inbin = [1100, 1101, 1105] -- the indexes that correspond to tab
+                #   remove_arr may be [0], so we add index 1100 to indextoremove
+                #   and update inbin so that it's only [1101, 1105]
+                # zztabindex will take in inbin
+                # zzdelm will take in the delta mags corresponding from tab[inbin]
+                # zz will take the mean of the delta mags
                 remove_arr = sigmaclip(delmall[inbin], low, high)
                 indextoremove = np.append(indexestoremove, inbin[remove_arr])
                 inbin = np.delete(inbin, remove_arr)
                 zztabindex[i][j] = inbin
+                zzdelm = delmall[inbin]
                 zz[i][j] = np.mean(delmall[inbin])
             else:
                 zz[i][j] = 0
     indextoremove = map(int, indexestoremove)
     tab.remove_rows(indextoremove)
-    return [tab, zz, zztabindex]
+    return [tab, zz,zzdelm, zztabindex]
 #####################################################
 #####################################################
 #####################################################
