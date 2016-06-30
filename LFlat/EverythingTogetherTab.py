@@ -7,7 +7,7 @@ import time
 start_time = time.time()
 
 # import functions from DataInfoTab (which deals with getting and filtering the data)
-from DataInfoTab import remove_stars_tab, sigmaclip, sigmaclip_starmag, make_absmag, sigmaclip_delmagall, bin_filter, extract_data_dicts
+from DataInfoTab import remove_stars_tab, sigmaclip, sigmaclip_starmag, make_avgmagandflux, sigmaclip_delmagall, bin_filter, extract_data_dicts
 
 CHIP1XLEN = CHIP2XLEN = 4096 
 CHIP1YLEN = CHIP2YLEN = 2048
@@ -35,6 +35,13 @@ starIDarr = np.unique(tab['id'])     # collect all the star IDs
 starttablen = len(tab)
 startstarnum = len(starIDarr)
 timeread = time.time()
+#mag = tab['mag']
+#magerr = tab['magerr']
+#plt.plot(mag, magerr, 'o')
+#plt.show()
+print len(tab)
+tab =  tab[np.where(tab['mag'] < 28)[0]] # only contain the values of less than 28
+print len(tab)
 print "%s seconds for reading in the data" % (timeread - start_time)
 ##########################################################
 ##########################################################
@@ -52,7 +59,7 @@ tab, starIDarr = sigmaclip_starmag(tab, starIDarr, low, high)
 # Remove any stars that may have less than the min observations after sigmaclipping
 tab, starIDarr, removestarlist = remove_stars_tab(tab, starIDarr, min_num_obs = 4)
 # Create the absolute magnitude and errors columns
-tab, starIDarr = make_absmag(tab, starIDarr)
+tab, starIDarr = make_avgmagandflux(tab, starIDarr)
 # Remove any observations that have too high of a delta magnitude on a large scale
 low, high = 3, 3
 tab, starIDarr = sigmaclip_delmagall(tab, starIDarr, low, high)
@@ -72,28 +79,67 @@ print "%s seconds for filtering the data" % (timefilter - timeread)
 ##########################################################
 ####################### Fitting ##########################
 ##########################################################
-def func(x,y):
+from sympy import *
+def func(x, y, n = 5):
     ''' 
     Purpose
     -------
-    The 2D function we want to optimize 
+    The 2D nth order polynomial function we want to optimize
     '''
-    return [x**2, y**2, x*y, x, y, 1+x*0]
-    
+    def norder2dpoly(n):
+        ''' 
+        Purpose: Create the 2D nth order polynomial
+        Returns:
+            funclist -- A list of the different components of the poly 
+                            (elements are Symbol types)
+            f        -- A function made from funclist and takes in two
+                            parameters, x and y
+        How it works:
+            a 2nd order can be grouped like: 1; x1y0 x0y1; x2y0 x1y1 x0y2
+            (where x0 = x**0, x1 = x**1 and so on)
+            So the degree of x starts at a certain number (currnum) and decreases
+            by one, while the degree of y starts at 0 and increase by one until currnum
+        Note: 
+            lambdify needs to take in a list and not array; and for a 2d
+            polynomial, the constant term needs to be 1 + 0*x but lambdify
+            makes it just 1, which becomes a problem when trying to fit the 
+            function and hence why the 0th element turns into np.ones(len(x))
+        '''
+        x = Symbol('x')
+        y = Symbol('y')
+        funcarr = np.array([])
+        for currnum in range(n+1):
+            xi = currnum
+            yi = 0
+            while yi <= currnum:
+                funcarr = np.append(funcarr, x**xi * y**yi)
+                yi += 1
+                xi -= 1
+        funclist = funcarr.tolist() # lambdify only takes in lists and not arrays
+        f = lambdify((x, y), funclist) # lambdify looks at 1 + 0*x as 1 and makes f[0] = 1
+        return funclist, f # return the list in case we want to look at how the function is
+    funclist, f = norder2dpoly(n)
+    func2optimize = f(x,y)
+    func2optimize[0] = np.ones(len(x)) # because f(x,y)[0] = 1 and not [1,1,...,1,1]
+    return func2optimize
+    #return [1+x*0, x, y, x**2, x*y, y**2, x**3, x**2*y, x*y**2, y**3, x**4, x**3*y, x**2*y**2, x*y**3, y**4, x**5, x**4*y, x**3*y**2, x**2*y**3, x*y**4, y**5]
+    #return [x**2, y**2, x*y, x, y, 1+x*0] # 3rd order
+
 def getfit(tab, xpixel, ypixel):
     '''
     NEED TO ADD DESCRIPTION
     '''
     x = tab['x']
     y = [row['y'] if row['chip'] == 2 else row['y'] + CHIP2YLEN for row in tab]
-    z = tab['mag'] - tab['absmag']
+    z = tab['mag'] - tab['avgmag']
     x = np.asarray(x)
     y = np.asarray(y)
     z = np.asarray(z)
     
     xx, yy = np.meshgrid(xpixel, ypixel, sparse = True, copy = False) #why copy false??
-    f = func(x,y)
-    fmesh = func(xx,yy)
+    n = 15
+    f = func(x,y,n)
+    fmesh = func(xx,yy,n)
     A = np.array(f).T
     B = z
     coeff, rsum, rank, s = np.linalg.lstsq(A, B)
@@ -141,7 +187,7 @@ def plot3dfit(x,y,z,X,Y,Z, title = '', scatter = False):
     ax.plot_wireframe(X,Y,Z, rstride=1, cstride=1)
     ax.set_title(title)
     if scatter:
-        ax.scatter(x,y,z, s= 50)
+        ax.scatter(x,y,z, s= 50, alpha = .05)
     #for i in range(len(z)):
     #    zpoint = z[i]
     #    xpoint, ypoint = x[i],y[i]

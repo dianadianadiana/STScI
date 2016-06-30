@@ -260,21 +260,24 @@ def bin_filter(tab, xpixelarr, ypixelarr, xbin, ybin, low = 3, high = 3):
 #####################################################
 ########### Find the Absolute Magnitude #############
 #####################################################
-def convertmag2flux(mag):
+def convertmag2flux(mag, mag0 = 0, flux0 = 1):
     ''' Converts a magnitude to a flux 
     -- assume zero-point mag is 0 and flux is a constant '''
-    return 10**(.4*-mag)
+    return flux0 * 10**(.4*(mag0-mag))
     
-def convertflux2mag(flux):
+def convertflux2mag(flux, mag0 = 0, flux0 = 1):
     ''' Converts a flux into a magnitude
     -- assume zero-point mag is 0 and flux is a constant ''' 
-    return -2.5 * np.log10(flux)
+    return mag0 - 2.5 * np.log10(flux/flux0)
     
-def make_avgmag(tab, starIDarr):
+def make_avgmagandflux(tab, starIDarr):
     """
     Purpose
     -------
-    To create two columns to store the absolute magnitude and its error
+    To create six new columns to store the average magnitude and its error; the fluxes
+    and their error; the average flux and its error. The magnitude readings are 
+    converted into fluxes and then the average flux is taken and converted to
+    magnitude to make the 'real' magnitude.
     
     Paramters
     ---------
@@ -283,13 +286,15 @@ def make_avgmag(tab, starIDarr):
         
     Returns
     -------
-    tab:                The updated Astropy table with abs mag and its error
+    tab:                The updated Astropy table
     starIDarr:          The array with all the star IDs; should not be modified
                         but returned for consistency
     Notes
     -----
-    1) Absolute magnitude will just be the mean of all the magnitudes for that star
-    2) The error is the the quadratic error ex. (e1^2 + e2^2 + .. + eN^2)^(1/2) / N
+    1) Average magnitude is the magnitude of the average flux
+    2) The error for avgmag is the the quadratic error ex. (e1^2 + e2^2 + .. + eN^2)^(1/2) / N
+    3) The fluxes are just converted from the magnitudes
+    4) flux error???? check equation
     """
     # Create two new columns
     filler = np.arange(len(tab))
@@ -318,21 +323,17 @@ def make_avgmag(tab, starIDarr):
         avgmagerr = np.sqrt(np.sum(currmagerr**2)) / len(currmagerr) 
         avgfluxerr = np.sqrt(np.sum(currfluxerr**2)) / len(currfluxerr) 
         
-        
         for i, index in enumerate(starindexes):         # input the abs mag and abs magerr
-            print currfluxes[i]
             tab[index]['avgmag'] = avgmag
             tab[index]['avgmagerr'] = avgmagerr   
             tab[index]['flux'] = currfluxes[i]
             tab[index]['fluxerr'] = currfluxerr[i]
             tab[index]['avgflux'] = np.mean(currfluxes)
             tab[index]['avgfluxerr'] = avgfluxerr
-
-                 
+    
     return tab, starIDarr
-tab, starIDarr, removestarlist = remove_stars_tab(tab, starIDarr, min_num_obs = 4)
-print tab   
-tab, starIDarr = make_avgmag(tab, starIDarr)
+tab, starIDarr, removestarlist = remove_stars_tab(tab, starIDarr, min_num_obs = 4)  
+tab, starIDarr = make_avgmagandflux(tab, starIDarr)
 #print "%s seconds for filtering the data" % (time.time() - start_time) # For everything to run ~ 111 seconds
 
 #####################################################
