@@ -160,10 +160,6 @@ def getfit(tab, xpixel, ypixel, chipnum, n = 5):
     resarr = get_res(z, zfit)
     return [x, y, z, zfit, xx, yy, zzfit, rsum, resarr]
 
-
-
-
-
 xpixel1 = np.linspace(0, CHIP1XLEN, xbin)
 ypixel1 = np.linspace(CHIP2YLEN, CHIP1YLEN + CHIP2YLEN, ybin)
 xpixel2 = np.linspace(0, CHIP2XLEN, xbin)

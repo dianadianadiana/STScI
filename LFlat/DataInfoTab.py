@@ -21,8 +21,9 @@ types = [int, int, int, np.float64, np.float64, np.float64, np.float64,
 tab = Table(data, names=names, dtype=types)
 tab.remove_columns(['d1','d2','d3']) # remove the dummy columns  
 tab.sort(['id'])                     # sort the table by starID
+#tab = tab[10000:20000]
 starIDarr = np.unique(tab['id'])     # collect all the star IDs
-tab = tab[1000:2000]
+
 #####################################################
 ################ Filter Functions ###################
 #####################################################
@@ -225,7 +226,7 @@ def bin_filter(tab, xpixelarr, ypixelarr, xbin, ybin, low = 3, high = 3):
                 zz[i][j] = 0
     indextoremove = map(int, indexestoremove)
     tab.remove_rows(indextoremove)
-    return [tab, zz,zzdelm, zztabindex]
+    return [tab, zz, zzdelm, zztabindex]
 #####################################################
 #####################################################
 #####################################################
@@ -234,31 +235,31 @@ def bin_filter(tab, xpixelarr, ypixelarr, xbin, ybin, low = 3, high = 3):
 #####################################################
 ################# Apply Filters #####################
 #####################################################
-#print 'Len of tab and starIDarr before anything'
-#print len(tab)
-#print len(starIDarr) 
-#print 'Len of tab and starIDarr after 1st min_num_obs'
-#tab, starIDarr, removestarlist = remove_stars_tab(tab, starIDarr, min_num_obs = 4)
-#print len(tab)
-#print len(starIDarr) 
-#tab, starIDarr = sigmaclip_starmag(tab, starIDarr, low = 3, high = 3)
-#print 'Len of tab and starIDarr after sigmaclipping'
-#print len(tab)
-#print len(starIDarr)
-#tab, starIDarr, removestarlist = remove_stars_tab(tab, starIDarr, min_num_obs = 4)
-#print 'Len of tab and starIDarr after 2nd min_num_obs'
-#print len(tab)
-#print len(starIDarr)
-#xpixelarr, ypixelarr = np.arange(CHIP1XLEN), np.arange(CHIP1YLEN + CHIP2YLEN)
-#xbin, ybin = 10, 10 
-#tab, zz, zztabindex = bin_filter(tab, xpixelarr, ypixelarr, xbin, ybin, low=3, high=3)
+print 'Len of tab and starIDarr before anything'
+print len(tab)
+print len(starIDarr) 
+tab =  tab[np.where((tab['mag'] <= 25) & (tab['mag'] >= 13))[0]] # (13,25)
+print 'Len of tab after constraining the magnitudes'
+print len(tab)
+print 'Len of tab and starIDarr after 1st min_num_obs'
+tab, starIDarr, removestarlist = remove_stars_tab(tab, starIDarr, min_num_obs = 4)
+print len(tab)
+print len(starIDarr) 
+tab, starIDarr = sigmaclip_starmag(tab, starIDarr, low = 3, high = 3)
+print 'Len of tab and starIDarr after sigmaclipping each star'
+print len(tab)
+print len(starIDarr)
+tab, starIDarr, removestarlist = remove_stars_tab(tab, starIDarr, min_num_obs = 4)
+print 'Len of tab and starIDarr after 2nd min_num_obs'
+print len(tab)
+print len(starIDarr)
 #####################################################
 #####################################################
 #####################################################
 
 
 #####################################################
-########### Find the Absolute Magnitude #############
+######## Find the Real Magnitude and Fluxes #########
 #####################################################
 def convertmag2flux(mag, mag0 = 0, flux0 = 1):
     ''' Converts a magnitude to a flux 
@@ -291,20 +292,19 @@ def make_avgmagandflux(tab, starIDarr):
                         but returned for consistency
     Notes
     -----
-    1) Average magnitude is the magnitude of the average flux
+    1) Average magnitude is the converted magnitude of the average flux
     2) The error for avgmag is the the quadratic error ex. (e1^2 + e2^2 + .. + eN^2)^(1/2) / N
     3) The fluxes are just converted from the magnitudes
-    4) flux error???? check equation
     """
     # Create two new columns
     filler = np.arange(len(tab))
     
-    c1 = Column(data = filler, name = 'avgmag')
-    c2 = Column(data = filler, name = 'avgmagerr')
-    c3 = Column(data = filler, name = 'flux')
-    c4 = Column(data = filler, name = 'fluxerr')
-    c5 = Column(data = filler, name = 'avgflux')
-    c6 = Column(data = filler, name = 'avgfluxerr')
+    c1 = Column(data = filler, name = 'avgmag', dtype = np.float64)
+    c2 = Column(data = filler, name = 'avgmagerr', dtype = np.float64)
+    c3 = Column(data = filler, name = 'flux', dtype = np.float64)
+    c4 = Column(data = filler, name = 'fluxerr', dtype = np.float64)
+    c5 = Column(data = filler, name = 'avgflux', dtype = np.float64)
+    c6 = Column(data = filler, name = 'avgfluxerr', dtype = np.float64)
     tab.add_column(c1)
     tab.add_column(c2)
     tab.add_column(c3)
@@ -317,24 +317,37 @@ def make_avgmagandflux(tab, starIDarr):
         currmags = np.array(tab[starindexes]['mag'])    # the current magnitudes 
         currmagerr = tab[starindexes]['magerr']         # the current magnitude errors (type = class <'astropy.table.column.Column'>)
         currfluxes = convertmag2flux(currmags)          # the current fluxes
-        currfluxerr = np.array([2.303*flux*magerr for flux, magerr in zip(currfluxes, currmagerr)])
+        currfluxerr = np.array([2.303*flux*magerr for flux, magerr in zip(currfluxes, currmagerr)]) # Using antilog error propagation
+        #currfluxerr = np.array([flux*magerr/1.086 for flux, magerr in zip(currfluxes, currmagerr)])
+        # http://www.astro.wisc.edu/~mab/education/astro500/lectures/a500_lecture2_s13.pdf Slide #11
         
         avgmag = convertflux2mag(np.mean(currfluxes))   # the absolute magnitude
-        avgmagerr = np.sqrt(np.sum(currmagerr**2)) / len(currmagerr) 
-        avgfluxerr = np.sqrt(np.sum(currfluxerr**2)) / len(currfluxerr) 
+        avgerror = lambda errarr: np.sqrt(np.sum(errarr**2)) / len(errarr)
+        avgmagerr = avgerror(currmagerr)
+        avgfluxerr = avgerror(currfluxerr)
         
         for i, index in enumerate(starindexes):         # input the abs mag and abs magerr
             tab[index]['avgmag'] = avgmag
-            tab[index]['avgmagerr'] = avgmagerr   
+            tab[index]['avgmagerr'] = avgmagerr  
             tab[index]['flux'] = currfluxes[i]
             tab[index]['fluxerr'] = currfluxerr[i]
             tab[index]['avgflux'] = np.mean(currfluxes)
             tab[index]['avgfluxerr'] = avgfluxerr
     
     return tab, starIDarr
-tab, starIDarr, removestarlist = remove_stars_tab(tab, starIDarr, min_num_obs = 4)  
 tab, starIDarr = make_avgmagandflux(tab, starIDarr)
-#print "%s seconds for filtering the data" % (time.time() - start_time) # For everything to run ~ 111 seconds
+SN = tab['flux']/tab['fluxerr']
+print min(SN)
+tab =  tab[np.where(tab['flux']/tab['fluxerr'] > 5)[0]] # S/N ratio for flux is greater than 5
+tab, starIDarr = sigmaclip_delmagall(tab, starIDarr, low = 3, high = 3)
+print 'Len of tab and starIDarr after sigmaclipping delta magnitudes'
+print len(tab)
+print len(starIDarr)
+# Don't really need to do a bin filter as below
+#xpixelarr, ypixelarr = np.arange(CHIP1XLEN), np.arange(CHIP1YLEN + CHIP2YLEN)
+#xbin, ybin = 10, 10 
+#tab, zz, zzdelm, zztabindex = bin_filter(tab, xpixelarr, ypixelarr, xbin, ybin, low=3, high=3)
+print "%s seconds for filtering the data" % (time.time() - start_time) # For everything to run ~ 111 seconds
 
 #####################################################
 #####################################################
