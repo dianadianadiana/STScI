@@ -187,7 +187,6 @@ def chisqall(params,x,data):
         if not pointvalue:
             funcvalues[0] = np.ones(len(x))
         if chipnum == 1:
-
             a0 = params['a0'].value
             ax = params['ax'].value
             ay = params['ay'].value
@@ -222,9 +221,6 @@ def chisqall(params,x,data):
     #resid1 = np.asarray((zfit-chip1rows['flux'])/ chip1rows['fluxerr'])
         
     for row in chip1rows:
-
-        
-        
         currchip = 1
         currstar = row['id']
         print currstar
@@ -234,24 +230,12 @@ def chisqall(params,x,data):
         curry = row['y']
         currf = row['flux']
         currferr = row['fluxerr']
-        currfit = getfit(1,currx, curry)
-        print 'currfit2', currfit
+        currfit = getfit(1, currx, curry)
         #currfit = a0 + ax*currx + ay*curry + ax2*currx**2 + axy*currx*curry + ay2*curry**2
-        #print 'currfit1', currfit
         currstarfluxes = currstarrows['flux']
         #currstarfluxerrs = currstarrows['fluxerr']
-        fits = np.array([])
-        for row in currstarrows:
-            x = row['x']
-            y = row['y']
-            chip = row['chip']
-            if chip == 1:
-                fits = np.append(fits, a0 + ax*x + ay*y + ax2*x**2 + axy*x*y + ay2*y**2)
-            else: 
-                fits = np.append(fits, b0 + bx*x + by*y + bx2*x**2 + bxy*x*y + by2*y**2)
-        print 'fits1', fits
-        #fits = [getfit(row['chip'], row['x'], row['y']) for row in currstarrows]
-        print 'fits2', fits
+
+        fits = [getfit(row['chip'], row['x'], row['y']) for row in currstarrows]
         curravgf = np.mean(currstarfluxes/fits)
         #print curravgf
         
@@ -273,33 +257,6 @@ result = minimize(chisqall, params, args=(x,tab))
 report_fit(result.params)
 
 
-# with getfit function
-#a0:    1.0000e-20 +/- 0        (0.00%) (init= 1e-20)
-#    ax:   -1.3629e-31 +/- 0        (0.00%) (init= 0)
-#    ay:   -5.8734e-31 +/- 0        (0.00%) (init= 0)
-#    ax2:  -3.8418e-35 +/- 0        (0.00%) (init= 0)
-#    axy:  -1.6748e-34 +/- 0        (0.00%) (init= 0)
-#    ay2:  -2.2187e-34 +/- 0        (0.00%) (init= 0)
-#    b0:    1.0000e-20 +/- 0        (0.00%) (init= 1e-20)
-#[  22.33172442   25.30143561   23.00447989   23.55946837   25.03262031
-#  271.5         105.55552272  105.61109276    1.29825448   -1.23431281
-#    0.57424653   -0.69375945   -1.31360049    8.72517072   -4.22236936
-#   -3.92909136   21.22957337   20.39516658   18.1071204    17.98648034
-#   20.52419848   19.81163996   19.68130115]
-
-# manually using the params
- #a0:    1.0000e-20 +/- 0        (0.00%) (init= 1e-20)
- #   ax:   -3.8065e-23 +/- 0        (0.00%) (init= 0)
- #   ay:    5.5382e-24 +/- 0        (0.00%) (init= 0)
- #   ax2:  -2.6771e-23 +/- 0        (0.00%) (init= 0)
- #   axy:   5.4831e-24 +/- 0        (0.00%) (init= 0)
- #   ay2:   1.0715e-25 +/- 0        (0.00%) (init= 0)
- #   b0:    1.0000e-20 +/- 0        (0.00%) (init= 1e-20)
- #resid1 = [-30.17095618  21.24620304  14.98954732 -23.41344972 -25.15861616
- #-23.66025465  24.26660409 -50.62007158  -9.8379675    8.24489516
- # -6.670859     5.08113379 -17.89285708  27.02210008 -29.99618636
- #  8.0202657  -23.02615345  -6.88173449 -28.31150748 -28.51337233
- # 21.59236261  -3.19822059]
 
 
 
