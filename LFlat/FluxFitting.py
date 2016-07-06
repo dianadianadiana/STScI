@@ -1,8 +1,12 @@
 import numpy as np
+from lmfit import minimize, Parameters, report_fit
 
 CHIP1XLEN = CHIP2XLEN = 4096 
 CHIP1YLEN = CHIP2YLEN = 2048
 
+###########################################
+###########################################
+###########################################
 from sympy import * 
 def norder2dpoly(n):
         ''' 
@@ -45,6 +49,9 @@ def norder2dpoly(n):
 #fitfunc = lambdify((x,y), fitfunc)
 #print fitfunc(2,4)
 
+###########################################
+###########################################
+###########################################
 
 from astropy.table import Table, Column
 from DataInfoTab import remove_stars_tab, convertmag2flux, convertflux2mag, make_avgmagandflux
@@ -63,7 +70,7 @@ types = [int, int, int, np.float64, np.float64, np.float64, np.float64,
 tab = Table(data, names=names, dtype=types)
 tab.remove_columns(['d1','d2','d3']) # remove the dummy columns  
 tab.sort(['id'])                     # sort the table by starID
-tab = tab[10000:11000]
+tab = tab[10000:10100]
 starIDarr = np.unique(tab['id'])     # collect all the star IDs
 
 tab =  tab[np.where((tab['mag'] <= 25) & (tab['mag'] >= 13))[0]] # (13,25)
@@ -80,160 +87,254 @@ func2read, func2fit = norder2dpoly(2)
 
 print func2read
 
+###########################################
+###########################################
+###########################################      
 
-class Coefficient(dict):
-    def __init__(self, **kwargs):
-        #for k in kwargs.keys():
-        #    #if k in [acceptable_keys_list]:
-        #    self.__setattr__(k, kwargs[k])
-        dict.__init__(self, **kwargs)
-        self.__dict__ = self
-    #def __setattr__(self, name, value):
-    #    print (name, value)
-    #    self.__dict__[name] = value
-    #def __getitem__(self, key):
-    #    return self.data[key]
-    #    #setattr(self, name, value)
-a = Coefficient(a0 = 1e-20, a1 = 0, a2 = 0, a3 = 0, a4 = 0, a5 = 0)
-b = Coefficient(b0 = 1e-20, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0)       
+paramsa = Parameters()
+paramsb = Parameters()
 
+#          (Name, Value, Vary, Min, Max, Expr)
+paramsa.add_many(
+           ('a0', 1e-20, True, None, None, None),
+           ('ax',   0,  True,  None,  None,  None),
+           ('ay',   0,  True,  None, None,  None),
+           ('ax2',   0,  True, None, None,  None),
+           ('axy',   0,  True,  None,  None,  None),
+           ('ay2',  0, True, None, None, None))
+           
+paramsb.add_many(
+           ('b0', 1e-20, True, None, None, None),
+           ('bx',   0,  True,  None,  None,  None),
+           ('by',   0,  True,  None, None,  None),
+           ('bx2',   0,  True, None, None,  None),
+           ('bxy',   0,  True,  None,  None,  None),
+           ('by2',  0, True, None, None, None))
 
 
 def get_coeff(chipnum):
-    c = np.array([])
     if chipnum == 1: 
-        coeff = a
+        dicta = paramsa.valuesdict() # OrderedDict
+        return np.asarray(dicta.values())
     else:
-        coeff = b
-    for key in np.sort(coeff.keys()):
-        c = np.append(c, coeff[key])
-    return c
+        dictb = paramsb.valuesdict() # OrderedDict
+        return np.asarray(dictb.values())
 
 def getdelta(chipnum, xpixel, ypixel):
-    if chipnum == 1: ypixel = ypixel + CHIP2YLEN
+    #if chipnum == 1: ypixel = ypixel + CHIP2YLEN
     coeff = get_coeff(chipnum)
     #print xpixel, ypixel, chipnum
     delta = func2fit(xpixel, ypixel) * coeff  
     #print delta
     #print np.sum(delta)
-    return delta
+    return np.sum(delta)
 
-def chisqstar(starrows):
-    ''' Worker function '''
-    # Input is the rows of the table corresponding to a single star so that we don't need to input a whole table
-    starfluxes = starrows['flux']
-    starfluxerrs = starrows['fluxerr']
-    deltas = [np.sum(getdelta(row['chip'], row['x'], row['y'])) for row in starrows]
-    #print starfluxes
-    #print starfluxerrs
-    #print deltas
-    avgf = np.mean(starfluxes/deltas)
-    #print avgf
-    #print starfluxes/deltas
-    #print starfluxes/deltas - avgf
-    #print starfluxerrs/deltas
-    chisq = np.sum(((starfluxes/deltas - avgf)/(starfluxerrs/deltas))**2)
-    return chisq
-   
-def chisqall(tab):
-    starIDarr = np.unique(tab['id'])
-    # np.where(tab['id'] == star)[0]                -- the indexes in tab where a star is located
-    # tab[np.where(tab['id'] == star)[0]]           -- "starrows" = the rows of tab for a certain star
-    # chisqstar(tab[np.where(tab['id'] == star)[0]])-- the chi squared for just one star
-    totalsum = np.sum([chisqstar(tab[np.where(tab['id'] == star)[0]]) for star in starIDarr])
-    return totalsum
+#def chisqstar(starrows):
+#    ''' Worker function '''
+#    # Input is the rows of the table corresponding to a single star so that we don't need to input a whole table
+#    starfluxes = starrows['flux']
+#    starfluxerrs = starrows['fluxerr']
+#    deltas = [getdelta(row['chip'], row['x'], row['y']) for row in starrows]
+#    print starrows
+#    print "STAR FLUXES", starfluxes
+#    print starfluxerrs
+#    print "DELTAS", deltas
+#    avgf = np.mean(starfluxes/deltas)
+#    print avgf
+#    print starfluxes/deltas
+#    print starfluxes/deltas - avgf
+#    print starfluxerrs/deltas
+#    print (starfluxes/deltas - avgf)/(starfluxerrs/deltas)
+#    chisq = np.sum(((starfluxes/deltas - avgf)/(starfluxerrs/deltas)))#**2)
+#    return chisq
+#   
+#def chisqall(tab):
+#    starIDarr = np.unique(tab['id'])
+#    # np.where(tab['id'] == star)[0]                -- the indexes in tab where a star is located
+#    # tab[np.where(tab['id'] == star)[0]]           -- "starrows" = the rows of tab for a certain star
+#    # chisqstar(tab[np.where(tab['id'] == star)[0]])-- the chi squared for just one star
+#    #totalsum = np.sum([chisqstar(tab[np.where(tab['id'] == star)[0]]) for star in starIDarr])
+#    totalsum = np.asarray([chisqstar(tab[np.where(tab['id'] == star)[0]]) for star in starIDarr])
+#    return totalsum
     
 
-minsum0 = chisqall(tab)
+#minsum0 = chisqall(tab)
+#params = paramsa +paramsb
+#
+#result = minimize(chisqall, params, args = tab)
 
-aa = np.linspace(-10e-20, 10e-20, 21)
-aa = np.append(np.logspace(-1,-30,10)*-1, np.logspace(-30,-1,10))
-bb = np.linspace(-1e-50, 1e-50, 101)
-bb = np.append(np.logspace(-1,-50,10)*-1, np.logspace(-50,-1,10))
-
-#c = np.linspace(-1e-13, 1e-13, 5)
-#d = np.linspace(-1e-13, 1e-13, 5)
-#e = np.linspace(-1e-13, 1e-13, 5)
-
-# in order to first determine the a0 or b0 coefficient since it has more weight
-#origco = b.b0
-#minco = b.b0
-#minsum = chisqall(tab)
-#for change in aa:
-#    b.b0 = origco + change
-#    currsum = chisqall(tab)
-#    if currsum < minsum:
-#        print 'True******'
-#        print minco
-#        minsum = currsum
-#        minco = b.b0
-#b.b0 = minco
-#print b
-
-def determine1stcoeff(coeffdict, varyingarr, tab):
-    firstkey = np.sort(coeffdict.keys())[0]
-    origco = coeffdict[firstkey]
-    minco = coeffdict[firstkey]
-    minsum = chisqall(tab)
-    for change in varyingarr:
-        coeffdict[firstkey] = origco + change
-        currsum = chisqall(tab)
-        if currsum < minsum:
-            print 'True******'
-            print minco
-            minsum = currsum
-            minco = coeffdict[firstkey]
-    coeffdict[firstkey] = minco
-    print minsum
-    return coeffdict
-a = determine1stcoeff(a, aa, tab)
-b = determine1stcoeff(b, aa, tab)
-
-def determinerestcoeff(coeffdict, varyingarr, tab):
-    # co = coefficient 
-    for co in np.sort(coeffdict.keys())[1:]:
-        origco = coeffdict[co]
-        minco = coeffdict[co]
-        minsum = chisqall(tab)
-        for change in varyingarr:
-            coeffdict[co] = origco + change
-            currsum = chisqall(tab)
-            if currsum < minsum:
-                print 'True**************'
-                print origco, change
-                print co, coeffdict[co]
-                minsum = currsum
-                minco = coeffdict[co]
-        coeffdict[co] = minco
-    print minsum
-    return coeffdict
-a = determinerestcoeff(a, bb, tab)
-b = determinerestcoeff(b, bb, tab)
-
-print a,b
-'''
-
-# co = coefficient 
-for co in np.sort(b.keys())[1:]:
-    origco = b[co]
-    minco = b[co]
-    minsum = chisqall(tab)
-    for change in bb:
-        b[co] = origco + change
-        currsum = chisqall(tab)
-        if currsum < minsum:
-            print 'True**************'
-            print co, b[co]
-            minsum = currsum
-            minco = b[co]
-    b[co] = minco
+def chisqall(params,x,data):
+    chip1rows = tab[np.where(tab['chip'] == 1)[0]]  
+    chip2rows = tab[np.where(tab['chip'] == 2)[0]]  
     
-print minsum0, minsum
-print b
+    resid1 = np.array([])
+    # go through first chip
+    a0 = params['a0'].value
+    ax = params['ax'].value
+    ay = params['ay'].value
+    ax2 = params['ax2'].value
+    axy = params['axy'].value
+    ay2 = params['ay2'].value
+    b0 = params['b0'].value
+    bx = params['bx'].value
+    by = params['by'].value
+    bx2 = params['bx2'].value
+    bxy = params['bxy'].value
+    by2 = params['by2'].value
+    
+    def getfit(chipnum, x, y, pointvalue = True):
+        funcvalues = func2fit(x,y)
+        if not pointvalue:
+            funcvalues[0] = np.ones(len(x))
+        if chipnum == 1:
+
+            a0 = params['a0'].value
+            ax = params['ax'].value
+            ay = params['ay'].value
+            ax2 = params['ax2'].value
+            axy = params['axy'].value
+            ay2 = params['ay2'].value
+            return np.sum(funcvalues * np.array([a0,ax,ay,ax2,axy,ay2]))
+        else:
+            b0 = params['b0'].value
+            bx = params['bx'].value
+            by = params['by'].value
+            bx2 = params['bx2'].value
+            bxy = params['bxy'].value
+            by2 = params['by2'].value
+            return np.sum(funcvalues * np.array([b0,bx,by,bx2,bxy,by2]))
+            
+    x = np.asarray(chip1rows['x'])
+    y = np.asarray(chip1rows['y'])
+
+    
+    ##funcvalues = func2fit(x1,y1)
+    ##funcvalues[0] = np.ones(len(x1))
+    ##zfit = np.zeros(len(x1))
+    ##coeff = paramsa.valuesdict().values() # OrderedDict
+    ##k = 0
+    ##while k < len(coeff):
+    ##    zfit += coeff[k]*funcvalues[k]
+    ##    k+=1
+    ##print zfit
+    #zfit = a0 + ax*x + ay*y + ax2*x**2 + axy*x*y + ay2*y**2
+    #print zfit - chip1rows['flux']
+    #resid1 = np.asarray((zfit-chip1rows['flux'])/ chip1rows['fluxerr'])
+        
+    for row in chip1rows:
+
+        
+        
+        currchip = 1
+        currstar = row['id']
+        print currstar
+        currstarrows = tab[np.where(tab['id'] == currstar)[0]]
+        #print currstarrows
+        currx = row['x']
+        curry = row['y']
+        currf = row['flux']
+        currferr = row['fluxerr']
+        currfit = getfit(1,currx, curry)
+        print 'currfit2', currfit
+        #currfit = a0 + ax*currx + ay*curry + ax2*currx**2 + axy*currx*curry + ay2*curry**2
+        #print 'currfit1', currfit
+        currstarfluxes = currstarrows['flux']
+        #currstarfluxerrs = currstarrows['fluxerr']
+        fits = np.array([])
+        for row in currstarrows:
+            x = row['x']
+            y = row['y']
+            chip = row['chip']
+            if chip == 1:
+                fits = np.append(fits, a0 + ax*x + ay*y + ax2*x**2 + axy*x*y + ay2*y**2)
+            else: 
+                fits = np.append(fits, b0 + bx*x + by*y + bx2*x**2 + bxy*x*y + by2*y**2)
+        print 'fits1', fits
+        #fits = [getfit(row['chip'], row['x'], row['y']) for row in currstarrows]
+        print 'fits2', fits
+        curravgf = np.mean(currstarfluxes/fits)
+        #print curravgf
+        
+        resid1 = np.append(resid1, currf/currferr - currfit/currferr * curravgf)
+    print resid1
+    return resid1
+
+
+params = paramsa +paramsb
+#resid = chisqall(tab, params)
 
 
 
-'''
+
+
+x = []
+data = []
+result = minimize(chisqall, params, args=(x,tab))
+report_fit(result.params)
+
+
+# with getfit function
+#a0:    1.0000e-20 +/- 0        (0.00%) (init= 1e-20)
+#    ax:   -1.3629e-31 +/- 0        (0.00%) (init= 0)
+#    ay:   -5.8734e-31 +/- 0        (0.00%) (init= 0)
+#    ax2:  -3.8418e-35 +/- 0        (0.00%) (init= 0)
+#    axy:  -1.6748e-34 +/- 0        (0.00%) (init= 0)
+#    ay2:  -2.2187e-34 +/- 0        (0.00%) (init= 0)
+#    b0:    1.0000e-20 +/- 0        (0.00%) (init= 1e-20)
+#[  22.33172442   25.30143561   23.00447989   23.55946837   25.03262031
+#  271.5         105.55552272  105.61109276    1.29825448   -1.23431281
+#    0.57424653   -0.69375945   -1.31360049    8.72517072   -4.22236936
+#   -3.92909136   21.22957337   20.39516658   18.1071204    17.98648034
+#   20.52419848   19.81163996   19.68130115]
+
+# manually using the params
+ #a0:    1.0000e-20 +/- 0        (0.00%) (init= 1e-20)
+ #   ax:   -3.8065e-23 +/- 0        (0.00%) (init= 0)
+ #   ay:    5.5382e-24 +/- 0        (0.00%) (init= 0)
+ #   ax2:  -2.6771e-23 +/- 0        (0.00%) (init= 0)
+ #   axy:   5.4831e-24 +/- 0        (0.00%) (init= 0)
+ #   ay2:   1.0715e-25 +/- 0        (0.00%) (init= 0)
+ #   b0:    1.0000e-20 +/- 0        (0.00%) (init= 1e-20)
+ #resid1 = [-30.17095618  21.24620304  14.98954732 -23.41344972 -25.15861616
+ #-23.66025465  24.26660409 -50.62007158  -9.8379675    8.24489516
+ # -6.670859     5.08113379 -17.89285708  27.02210008 -29.99618636
+ #  8.0202657  -23.02615345  -6.88173449 -28.31150748 -28.51337233
+ # 21.59236261  -3.19822059]
+
+
+
+paramsa.pretty_print()
+paramsb.pretty_print()
+
+def example():
+    # create data to be fitted
+    x = np.linspace(0, 15, 301)
+    data = (5. * np.sin(2 * x - 0.1) * np.exp(-x*x*0.025) +
+            np.random.normal(size=len(x), scale=0.2) )
+    # define objective function: returns the array to be minimized
+    def fcn2min(params, x, data):
+        """ model decaying sine wave, subtract data""" 
+        amp = params['amp'].value
+        shift = params['shift'].value
+        omega = params['omega'].value
+        decay = params['decay'].value
+        model = amp * np.sin(x * omega + shift) * np.exp(-x*x*decay) 
+        return model - data
+    # create a set of Parameters
+    params = Parameters()
+    params.add('amp',   value= 10,  min=0)
+    params.add('decay', value= 0.1)
+    params.add('shift', value= 0.0, min=-np.pi/2., max=np.pi/2)
+    params.add('omega', value= 3.0)
+    # do fit, here with leastsq model
+    result = minimize(fcn2min, params, args=(x, data))
+    # calculate final result
+    final = data + result.residual
+    
+    report_fit(result.params)
+
+
+
 
 
 from mpl_toolkits.mplot3d import Axes3D
@@ -249,6 +350,8 @@ def convert2mesh(chipnum, xbin = 10, ybin = 5):
     xx, yy = np.meshgrid(xpixel, ypixel, sparse = True, copy = False) #why copy false??
     fmesh = func2fit(xx,yy)
     coeff = get_coeff(chipnum)
+    if chipnum ==1:
+        coeff = np.array(paramsa.valuesdict().values())
     zzfit = [[0 for i in xpixel] for j in ypixel]
     k = 0
     while k < len(coeff):
@@ -275,7 +378,7 @@ def plotdelflux(tab):
     ax = fig.add_subplot(111, projection='3d')
     ax.scatter(x,y,delflux)
     plt.show()
-plotdelflux(tab)
+#plotdelflux(tab)
 
 def plotall(tab, a,b):
     X1,Y1,Z1 = a
