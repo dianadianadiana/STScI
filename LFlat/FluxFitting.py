@@ -148,7 +148,7 @@ def getdelta(chipnum, xpixel, ypixel):
 #    chisq = np.sum(((starfluxes/deltas - avgf)/(starfluxerrs/deltas)))#**2)
 #    return chisq
 #   
-#def chisqall(tab):
+#def chisqall1(params, x, tab):
 #    starIDarr = np.unique(tab['id'])
 #    # np.where(tab['id'] == star)[0]                -- the indexes in tab where a star is located
 #    # tab[np.where(tab['id'] == star)[0]]           -- "starrows" = the rows of tab for a certain star
@@ -156,112 +156,120 @@ def getdelta(chipnum, xpixel, ypixel):
 #    #totalsum = np.sum([chisqstar(tab[np.where(tab['id'] == star)[0]]) for star in starIDarr])
 #    totalsum = np.asarray([chisqstar(tab[np.where(tab['id'] == star)[0]]) for star in starIDarr])
 #    return totalsum
-    
+#    
 
 #minsum0 = chisqall(tab)
 #params = paramsa +paramsb
 #
 #result = minimize(chisqall, params, args = tab)
 
-def chisqall(params,x,data):
+def chisqall(params, x, data):
     chip1rows = tab[np.where(tab['chip'] == 1)[0]]  
     chip2rows = tab[np.where(tab['chip'] == 2)[0]]  
     
-    resid1 = np.array([])
     # go through first chip
-    a0 = params['a0'].value
-    ax = params['ax'].value
-    ay = params['ay'].value
-    ax2 = params['ax2'].value
-    axy = params['axy'].value
-    ay2 = params['ay2'].value
-    b0 = params['b0'].value
-    bx = params['bx'].value
-    by = params['by'].value
-    bx2 = params['bx2'].value
-    bxy = params['bxy'].value
-    by2 = params['by2'].value
+    #a0 = params['a0'].value
+    #ax = params['ax'].value
+    #ay = params['ay'].value
+    #ax2 = params['ax2'].value
+    #axy = params['axy'].value
+    #ay2 = params['ay2'].value
+    #b0 = params['b0'].value
+    #bx = params['bx'].value
+    #by = params['by'].value
+    #bx2 = params['bx2'].value
+    #bxy = params['bxy'].value
+    #by2 = params['by2'].value
     
+    def get_coeff(chipnum):
+        if chipnum == 1: 
+            aa = [params[key] for key in params if key[0]=='a']
+            paraa = Parameters()
+            for param in aa:
+                paraa.add(param)
+            dicta = paraa.valuesdict() # OrderedDict
+            #return np.array([a0,ax,ay,ax2,axy,ay2])
+            return np.asarray(dicta.values())
+        else:
+            bb = [params[key] for key in params if key[0]=='b']
+            parbb = Parameters()
+            for param in bb:
+                parbb.add(param)
+            dictb = parbb.valuesdict() # OrderedDict
+            #return np.array([b0,bx,by,bx2,bxy,by2])
+            return np.asarray(dictb.values())
+        
     def getfit(chipnum, x, y, pointvalue = True):
         funcvalues = func2fit(x,y)
         if not pointvalue:
             funcvalues[0] = np.ones(len(x))
         if chipnum == 1:
-            a0 = params['a0'].value
-            ax = params['ax'].value
-            ay = params['ay'].value
-            ax2 = params['ax2'].value
-            axy = params['axy'].value
-            ay2 = params['ay2'].value
-            return np.sum(funcvalues * np.array([a0,ax,ay,ax2,axy,ay2]))
+            #return np.sum(funcvalues * np.array([a0,ax,ay,ax2,axy,ay2]))
+            return np.sum(funcvalues * get_coeff(chipnum))
         else:
-            b0 = params['b0'].value
-            bx = params['bx'].value
-            by = params['by'].value
-            bx2 = params['bx2'].value
-            bxy = params['bxy'].value
-            by2 = params['by2'].value
-            return np.sum(funcvalues * np.array([b0,bx,by,bx2,bxy,by2]))
+            #return np.sum(funcvalues * np.array([b0,bx,by,bx2,bxy,by2]))
+            return np.sum(funcvalues * get_coeff(chipnum))
             
-    x = np.asarray(chip1rows['x'])
-    y = np.asarray(chip1rows['y'])
-
-    
-    ##funcvalues = func2fit(x1,y1)
-    ##funcvalues[0] = np.ones(len(x1))
-    ##zfit = np.zeros(len(x1))
-    ##coeff = paramsa.valuesdict().values() # OrderedDict
-    ##k = 0
-    ##while k < len(coeff):
-    ##    zfit += coeff[k]*funcvalues[k]
-    ##    k+=1
-    ##print zfit
-    #zfit = a0 + ax*x + ay*y + ax2*x**2 + axy*x*y + ay2*y**2
-    #print zfit - chip1rows['flux']
-    #resid1 = np.asarray((zfit-chip1rows['flux'])/ chip1rows['fluxerr'])
-        
+    resid1 = np.array([])
+    currchip = 1
     for row in chip1rows:
-        currchip = 1
         currstar = row['id']
-        print currstar
         currstarrows = tab[np.where(tab['id'] == currstar)[0]]
-        #print currstarrows
         currx = row['x']
         curry = row['y']
         currf = row['flux']
         currferr = row['fluxerr']
-        currfit = getfit(1, currx, curry)
+        currfit = getfit(currchip, currx, curry)
         #currfit = a0 + ax*currx + ay*curry + ax2*currx**2 + axy*currx*curry + ay2*curry**2
         currstarfluxes = currstarrows['flux']
-        #currstarfluxerrs = currstarrows['fluxerr']
-
+        fits = [getfit(row['chip'], row['x'], row['y']) for row in currstarrows]
+        curravgf = np.mean(currstarfluxes/fits)
+        #print curravgf
+        resid1 = np.append(resid1, currf/currferr - currfit/currferr * curravgf)
+        
+        
+    resid2 = np.array([])
+    currchip = 2
+    for row in chip2rows:
+        currstar = row['id']
+        currstarrows = tab[np.where(tab['id'] == currstar)[0]]
+        currx = row['x']
+        curry = row['y']
+        currf = row['flux']
+        currferr = row['fluxerr']
+        currfit = getfit(currchip, currx, curry)
+        currstarfluxes = currstarrows['flux']
         fits = [getfit(row['chip'], row['x'], row['y']) for row in currstarrows]
         curravgf = np.mean(currstarfluxes/fits)
         #print curravgf
         
-        resid1 = np.append(resid1, currf/currferr - currfit/currferr * curravgf)
-    print resid1
-    return resid1
+        resid2 = np.append(resid2, currf/currferr - currfit/currferr * curravgf)
+    return np.concatenate((resid1, resid2))
 
 
-params = paramsa +paramsb
+params = paramsa + paramsb
 #resid = chisqall(tab, params)
-
-
-
-
-
 x = []
 data = []
-result = minimize(chisqall, params, args=(x,tab))
+result = minimize(chisqall, params, args=( x, tab))
 report_fit(result.params)
-
-
-
-
-
-paramsa.pretty_print()
-paramsb.pretty_print()
+#result1 = minimize(chisqall1, params, args = (x,tab))
+#report_fit(result1.params)
+#
+#paramsa.pretty_print()
+#paramsb.pretty_print()
+ #a0:    2.1660e-20 +/- 9.42e-16 (4350222.49%) (init= 1e-20)
+ #   ax:   -2.7935e-24 +/- 1.22e-19 (4351896.16%) (init= 0)
+ #   ay:    3.7290e-24 +/- 1.62e-19 (4349785.31%) (init= 0)
+ #   ax2:   4.5335e-28 +/- 1.97e-23 (4351618.47%) (init= 0)
+ #   axy:  -1.0902e-27 +/- 4.74e-23 (4349845.64%) (init= 0)
+ #   ay2:   2.7740e-28 +/- 1.21e-23 (4350150.96%) (init= 0)
+ #   b0:    2.2493e-20 +/- 9.78e-16 (4349554.53%) (init= 1e-20)
+ #   bx:   -2.9065e-24 +/- 1.26e-19 (4348903.84%) (init= 0)
+ #   by:    1.5195e-24 +/- 6.61e-20 (4349535.37%) (init= 0)
+ #   bx2:   4.5022e-28 +/- 1.96e-23 (4348961.11%) (init= 0)
+ #   bxy:  -4.0105e-28 +/- 1.74e-23 (4349723.74%) (init= 0)
+ #   by2:  -1.0628e-28 +/- 4.62e-24 (4348615.09%) (init= 0)
 
 def example():
     # create data to be fitted
