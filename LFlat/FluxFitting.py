@@ -46,7 +46,8 @@ def norder2dpoly(n):
 ###########################################
 
 from astropy.table import Table, Column
-from DataInfoTab import remove_stars_tab, convertmag2flux, convertflux2mag, make_avgmagandflux
+from DataInfoTab import remove_stars_tab, convertmag2flux, convertflux2mag,\
+                        make_avgmagandflux, sigmaclip_delmagdelflux
 # Read in the data
 path = '/Users/dkossakowski/Desktop/Data/'
 datafil = 'wfc_f606w_r5.lflat'
@@ -62,18 +63,18 @@ types = [int, int, int, np.float64, np.float64, np.float64, np.float64,
 tab = Table(data, names=names, dtype=types)
 tab.remove_columns(['filenum','d1','d2','d3'])   # remove the dummy columns  
 tab.sort(['id'])                                 # sort the table by starID
-tab = tab[10000:10050]
+tab = tab[10000:10500]
 starIDarr = np.unique(tab['id'])                 # collect all the star IDs
 
-datafil = 'one_noise.txt'
-data = np.genfromtxt(path+datafil)
-names = ['id', 'chip', 'x', 'y', 'mag', 'magerr']
-types = [int, int, np.float64, np.float64, np.float64, np.float64]
-
-tab = Table(data, names = names, dtype = types)
-tab.remove_row(0)
-starIDarr = np.unique(tab['id'])     # collect all the star IDs
-print tab
+#datafil = 'one_noise.txt'
+#data = np.genfromtxt(path+datafil)
+#names = ['id', 'chip', 'x', 'y', 'mag', 'magerr']
+#types = [int, int, np.float64, np.float64, np.float64, np.float64]
+#
+#tab = Table(data, names = names, dtype = types)
+#tab.remove_row(0)
+#starIDarr = np.unique(tab['id'])     # collect all the star IDs
+#print tab
 
 
 tab =  tab[np.where((tab['mag'] <= 25) & (tab['mag'] >= 13))[0]] # (13,25)
@@ -85,9 +86,11 @@ print len(tab)
 print len(starIDarr) 
 
 tab, starIDarr = make_avgmagandflux(tab, starIDarr)
+tab, starIDarr = sigmaclip_delmagdelflux(tab, starIDarr, flux = True, mag = False, low = 3, high = 3)
+
 print tab
 tab =  tab[np.where(tab['flux']/tab['fluxerr'] > 5)[0]] # S/N ratio for flux is greater than 5
-func2read, func2fit = norder2dpoly(0)
+func2read, func2fit = norder2dpoly(2)
 
 print func2read
 func2string = np.copy(func2read)
@@ -97,9 +100,6 @@ while k < len(func2string):
     func2string[k] = func2string[k].replace('*','')
     k+=1
 
-params = Parameters()
-for elem in func2string:
-    params.add('a'+elem, 0)
 
 ###########################################
 ###########################################
@@ -137,156 +137,143 @@ for elem in func2string[1:]:
 paramsa.pretty_print()
 paramsb.pretty_print()
 
-def get_coeff(chipnum):
-    chipletter = 'a' if chipnum == 1 else 'b'
-    paramlist = [params[key] for key in params if key[0] == chipletter]
-    par = Parameters()
-    for param in paramlist: # not really sure of more efficient way of putting the Parameter objects into a Parameters object
-        par.add(param)
-    chipdict = par.valuesdict()
-    return np.asarray(chipdict.values())
 
-def getdelta(chipnum, xpixel, ypixel):
-    #if chipnum == 1: ypixel = ypixel + CHIP2YLEN
-    coeff = get_coeff(chipnum)
-    #print xpixel, ypixel, chipnum
-    delta = func2fit(xpixel, ypixel) * coeff  
-    #print delta
-    #print np.sum(delta)
-    return np.sum(delta)
-
-def chisqstar(starrows):
+def chisqstar(starrows, params):
     ''' Worker function '''
+    #nonlocal chip2fit
+    def get_coeff():
+        pardict = params.valuesdict()
+        return np.asarray(pardict.values())
+        
+    def getfitvalue(chipnum, x, y, pointvalue = True):
+        if chipnum == 1 and chip2fit == 2: y = y + CHIP2YLEN 
+        if chipnum == 2 and chip2fit == 1: y = y - CHIP2YLEN 
+        funcvalues = func2fit(x,y)
+        if not pointvalue:
+            funcvalues[0] = np.ones(len(x))
+        return np.sum(funcvalues * get_coeff())
     # Input is the rows of the table corresponding to a single star so that we don't need to input a whole table
     starfluxes = starrows['flux']
     starfluxerrs = starrows['fluxerr']
-    deltas = [getdelta(row['chip'], row['x'], row['y']) for row in starrows]
-    print starrows
-    print "STAR FLUXES", starfluxes
-    print starfluxerrs
-    print "DELTAS", deltas
+    deltas = [getfitvalue(row['chip'], row['x'], row['y']) for row in starrows]
+    #print starrows
+    #print "STAR FLUXES", starfluxes
+    #print starfluxerrs
+    #print "DELTAS", deltas
     avgf = np.mean(starfluxes/deltas)
-    print avgf
-    print starfluxes/deltas
-    print starfluxes/deltas - avgf
-    print starfluxerrs/deltas
-    print (starfluxes/deltas - avgf)/(starfluxerrs/deltas)
-    chisq = np.sum(((starfluxes/deltas - avgf)/(starfluxerrs/deltas)))#**2)
-    return chisq
+    #print avgf
+    #print starfluxes/deltas
+    #print starfluxes/deltas - avgf
+    #print starfluxerrs/deltas
+    #print (starfluxes/deltas - avgf)/(starfluxerrs/deltas)
+    starresid = (starfluxes/deltas - avgf)/(starfluxerrs/deltas)#**2)
+    return np.asarray(starresid).tolist()
    
-def chisqall1(params, func2fit, tab):
+def chisqall1(params, func2fit, tab, chip2fit):
     starIDarr = np.unique(tab['id'])
     # np.where(tab['id'] == star)[0]                -- the indexes in tab where a star is located
     # tab[np.where(tab['id'] == star)[0]]           -- "starrows" = the rows of tab for a certain star
     # chisqstar(tab[np.where(tab['id'] == star)[0]])-- the chi squared for just one star
     #totalsum = np.sum([chisqstar(tab[np.where(tab['id'] == star)[0]]) for star in starIDarr])
-    totalsum = np.asarray([chisqstar(tab[np.where(tab['id'] == star)[0]]) for star in starIDarr])
-    return totalsum
-#    
-
-#minsum0 = chisqall(tab)
-#params = paramsa +paramsb
-#
-#result = minimize(chisqall, params, args = tab)
-
-def chisqall(params, func2fit, tab):
-    # go through first chip
-    #a1 = params['a1'].value
-    #ax = params['ax'].value
-    #ay = params['ay'].value
-    #ax2 = params['ax2'].value
-    #axy = params['axy'].value
-    #ay2 = params['ay2'].value
-    #b1 = params['b1'].value
-    #bx = params['bx'].value
-    #by = params['by'].value
-    #bx2 = params['bx2'].value
-    #bxy = params['bxy'].value
-    #by2 = params['by2'].value
+    totalresid = np.asarray([chisqstar(tab[np.where(tab['id'] == star)[0]], params) for star in starIDarr])
+    return reduce(lambda x,y: x+y,totalresid) # flatten totalresid
     
-    def get_coeff(chipnum):
-        chipletter = 'a' if chipnum == 1 else 'b'
-        paramlist = [params[key] for key in params if key[0] == chipletter]
-        par = Parameters()
-        for param in paramlist: # not really sure of more efficient way of putting the Parameter objects into a Parameters object
-            par.add(param)
-        chipdict = par.valuesdict()
-        return np.asarray(chipdict.values())
+
+
+#chip2fit = 1
+#resulta = minimize(chisqall1, paramsa, args=(func2fit, tab, chip2fit))
+#resparamsa = resulta.params
+#report_fit(resparamsa)
+#chip2fit = 2
+#resultb = minimize(chisqall1, paramsb, args=(func2fit, tab, chip2fit))
+#resparamsb = resultb.params
+#report_fit(resparamsb)
+
+#[[Variables]]
+    #a1:    1.0004e-08 +/- 0.000359 (3596011.28%) (init= 1e-08)
+    #ax:    7.2187e-19 +/- 3.26e-14 (4509327.58%) (init= 0)
+    #ay:   -5.2086e-21 +/- 9.07e-16 (17414585.48%) (init= 0)
+    #ax2:   3.2464e-19 +/- 1.17e-14 (3597333.77%) (init= 0)
+    #axy:  -5.0623e-21 +/- 1.83e-16 (3605713.12%) (init= 0)
+    #ay2:   2.6085e-23 +/- 1.88e-18 (7188328.27%) (init= 0)
+    #b1:    1.0004e-08 +/- 0.000159 (1598519.08%) (init= 1e-08)
+    #bx:    7.6629e-19 +/- 3.84e-14 (5011457.83%) (init= 0)
+    #by:   -5.1308e-21 +/- 7.77e-16 (15145977.17%) (init= 0)
+    #bx2:   3.4463e-19 +/- 5.51e-15 (1599903.31%) (init= 0)
+    #bxy:   3.2341e-21 +/- 5.22e-17 (1612960.81%) (init= 0)
+    #by2:   6.2002e-22 +/- 1.07e-17 (1728280.46%) (init= 0)
+def chisqall(params, func2fit, tab, chip2fit):
+    def get_coeff():
+        pardict = params.valuesdict()
+        return np.asarray(pardict.values())
         
     def getfitvalue(chipnum, x, y, pointvalue = True):
+        if chipnum == 1 and chip2fit == 2: y = y + CHIP2YLEN 
+        if chipnum == 2 and chip2fit == 1: y = y - CHIP2YLEN 
         funcvalues = func2fit(x,y)
         if not pointvalue:
             funcvalues[0] = np.ones(len(x))
-        if chipnum == 1: # keeping the if else in case we need to do something with the chipnum (y + Chip2ylen)
-            #return np.sum(funcvalues * np.array([a1,ax,ay,ax2,axy,ay2]))
-            return np.sum(funcvalues * get_coeff(chipnum))
-        else:
-            #return np.sum(funcvalues * np.array([b1,bx,by,bx2,bxy,by2]))
-            return np.sum(funcvalues * get_coeff(chipnum))
+        return np.sum(funcvalues * get_coeff())
             
-    def getresid(chipnum):
-        resid = np.array([])
-        chiprows = tab[np.where(tab['chip'] == chipnum)[0]]
-        for row in chiprows:
-            currstar = row['id']
-            currstarrows = tab[np.where(tab['id'] == currstar)[0]]
-            currx, curry = row['x'], row['y']
-            currf, currferr = row['flux'], row['fluxerr']
-            currfit = getfitvalue(chipnum, currx, curry)
-            currstarfluxes = currstarrows['flux']
-            fits = [getfitvalue(row['chip'], row['x'], row['y']) for row in currstarrows]
-            print '***', currstarfluxes
-            print '***', fits
-            curravgf = np.mean(currstarfluxes/fits)
-            #print '***'
-            #print curravgf
-            #print currf, currferr
-            #print currf/currferr
-            #print currf/currferr - currfit/currferr * curravgf
-            resid = np.append(resid, currf/currferr - currfit/currferr * curravgf)
-        return resid
+    resid = np.array([])
+    for row in tab:
+        currstar = row['id']
+        currstarrows = tab[np.where(tab['id'] == currstar)[0]]
+        currx, curry = row['x'], row['y']
+        currf, currferr = row['flux'], row['fluxerr']
+        currchip = row['chip']
+        currfit = getfitvalue(currchip, currx, curry)
+        currstarfluxes = currstarrows['flux']
+        fits = [getfitvalue(row['chip'], row['x'], row['y']) for row in currstarrows]
+        curravgf = np.mean(currstarfluxes/fits)
+        #print '***'
+        #print curravgf
+        #print currf, currferr
+        #print currf/currferr
+        #print currf/currferr - currfit/currferr * curravgf
+        resid = np.append(resid, currf/currferr - currfit/currferr * curravgf)
+    return resid
         
-    #resid1 = getresid(chipnum = 1)
-    resid2 = getresid(chipnum = 2)
-    print resid2
-    return resid2
-    return np.concatenate((resid1, resid2))
+#chip2fit = 1
+#resulta = minimize(chisqall, paramsa, args=(func2fit, tab, chip2fit))
+#resparamsa = resulta.params
+#report_fit(resparamsa)
+#chip2fit = 2
+#resultb = minimize(chisqall, paramsb, args=(func2fit, tab, chip2fit))
+#resparamsb = resultb.params
+#report_fit(resparamsb)
 
-
-#params = paramsa + paramsb
-params = paramsb
-result = minimize(chisqall, params, args=(func2fit, tab))
-resultparams = result.params
-report_fit(resultparams)
 
 # Take the results parameters and break them up for the different chips
-paramlista = [resultparams[key] for key in resultparams if key[0] == 'a'] # list of Parameter objects
-resparamsa = Parameters()
-for param in paramlista:
-    resparamsa.add(param)
-paramlistb = [resultparams[key] for key in resultparams if key[0] == 'b']
-resparamsb = Parameters()
-for param in paramlistb:
-    resparamsb.add(param)
+#paramlista = [resultparams[key] for key in resultparams if key[0] == 'a'] # list of Parameter objects
+#resparamsa = Parameters()
+#for param in paramlista:
+#    resparamsa.add(param)
+#paramlistb = [resultparams[key] for key in resultparams if key[0] == 'b']
+#resparamsb = Parameters()
+#for param in paramlistb:
+#    resparamsb.add(param)
     
 #result1 = minimize(chisqall1, params, args = (func2fit,tab))
 #report_fit(result1.params)
 
-#
+#[[Variables]]
+    #a1:    9.9981e-09 +/- 0.000343 (3425714.34%) (init= 1e-08)
+    #ax:    9.7294e-19 +/- 4.25e-14 (4367911.56%) (init= 0)
+    #ay:   -7.0347e-21 +/- 5.42e-16 (7705522.59%) (init= 0)
+    #ax2:   4.3754e-19 +/- 1.50e-14 (3427206.49%) (init= 0)
+    #axy:  -6.8228e-21 +/- 2.34e-16 (3432324.49%) (init= 0)
+    #ay2:   3.5126e-23 +/- 1.60e-18 (4568830.68%) (init= 0)
+    #b1:    9.9980e-09 +/- 0.000154 (1537755.05%) (init= 1e-08)
+    #bx:    1.0419e-18 +/- 5.30e-14 (5084391.73%) (init= 0)
+    #by:   -6.9845e-21 +/- 6.57e-16 (9413613.65%) (init= 0)
+    #bx2:   4.6851e-19 +/- 7.21e-15 (1539138.84%) (init= 0)
+    #bxy:   4.3965e-21 +/- 6.81e-17 (1548741.05%) (init= 0)
+    #by2:   8.4287e-22 +/- 1.36e-17 (1615744.16%) (init= 0)
+
 #paramsa.pretty_print()
 #paramsb.pretty_print()
- #   a1:    2.1660e-20 +/- 9.42e-16 (4350222.49%) (init= 1e-20)
- #   ax:   -2.7935e-24 +/- 1.22e-19 (4351896.16%) (init= 0)
- #   ay:    3.7290e-24 +/- 1.62e-19 (4349785.31%) (init= 0)
- #   ax2:   4.5335e-28 +/- 1.97e-23 (4351618.47%) (init= 0)
- #   axy:  -1.0902e-27 +/- 4.74e-23 (4349845.64%) (init= 0)
- #   ay2:   2.7740e-28 +/- 1.21e-23 (4350150.96%) (init= 0)
- #   b1:    2.2493e-20 +/- 9.78e-16 (4349554.53%) (init= 1e-20)
- #   bx:   -2.9065e-24 +/- 1.26e-19 (4348903.84%) (init= 0)
- #   by:    1.5195e-24 +/- 6.61e-20 (4349535.37%) (init= 0)
- #   bx2:   4.5022e-28 +/- 1.96e-23 (4348961.11%) (init= 0)
- #   bxy:  -4.0105e-28 +/- 1.74e-23 (4349723.74%) (init= 0)
- #   by2:  -1.0628e-28 +/- 4.62e-24 (4348615.09%) (init= 0)
+
 
 
 def example():
@@ -313,11 +300,10 @@ def example():
     result = minimize(fcn2min, params, args=(x, data))
     # calculate final result
     final = data + result.residual
+    print result.residual
+    resultparams = result.params
+    print resultparams
     report_fit(result.params)
-
-
-
-
 
 from mpl_toolkits.mplot3d import Axes3D
 import matplotlib.pyplot as plt
@@ -375,8 +361,7 @@ def plotall(tab, a,b):
     x = tab['x']
     y = [row['y'] if row['chip'] == 2 else row['y'] + CHIP2YLEN for row in tab]
     delflux = tab['flux'] - tab['avgflux']
-    ax.scatter(x,y,delflux)
-    #ax.scatter(x,y,delflux)
+    ax.scatter(x,y,delflux, s = 3)
     #ax.set_zlim([-1e-10,1e-10])
     return fig
 plt.show(plotall(tab,convert2mesh(chipnum=1, resultparams=resparamsa), convert2mesh(chipnum=2, resultparams=resparamsb)))
