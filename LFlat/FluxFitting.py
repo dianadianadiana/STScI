@@ -1,5 +1,6 @@
 import numpy as np
 from lmfit import minimize, Parameters, report_fit
+import time
 
 CHIP1XLEN = CHIP2XLEN = 4096 
 CHIP1YLEN = CHIP2YLEN = 2048
@@ -66,7 +67,7 @@ tab.sort(['id'])                                 # sort the table by starID
 tab = tab[10000:10500]
 starIDarr = np.unique(tab['id'])                 # collect all the star IDs
 
-#datafil = 'one_noise.txt'
+#datafil = 'one.txt'
 #data = np.genfromtxt(path+datafil)
 #names = ['id', 'chip', 'x', 'y', 'mag', 'magerr']
 #types = [int, int, np.float64, np.float64, np.float64, np.float64]
@@ -74,8 +75,6 @@ starIDarr = np.unique(tab['id'])                 # collect all the star IDs
 #tab = Table(data, names = names, dtype = types)
 #tab.remove_row(0)
 #starIDarr = np.unique(tab['id'])     # collect all the star IDs
-#print tab
-
 
 tab =  tab[np.where((tab['mag'] <= 25) & (tab['mag'] >= 13))[0]] # (13,25)
 print 'Len of tab after constraining the magnitudes'
@@ -87,11 +86,13 @@ print len(starIDarr)
 
 tab, starIDarr = make_avgmagandflux(tab, starIDarr)
 tab, starIDarr = sigmaclip_delmagdelflux(tab, starIDarr, flux = True, mag = False, low = 3, high = 3)
-
-print tab
 tab =  tab[np.where(tab['flux']/tab['fluxerr'] > 5)[0]] # S/N ratio for flux is greater than 5
-func2read, func2fit = norder2dpoly(2)
 
+###########################################
+############ Function to Fit ##############
+###########################################
+
+func2read, func2fit = norder2dpoly(1)
 print func2read
 func2string = np.copy(func2read)
 k = 0
@@ -100,9 +101,8 @@ while k < len(func2string):
     func2string[k] = func2string[k].replace('*','')
     k+=1
 
-
 ###########################################
-###########################################
+####### Setting up the Parameters #########
 ###########################################      
 
 paramsa = Parameters()
@@ -125,7 +125,7 @@ paramsb.add_many(
            ('bxy',   0,   True,  None,  None,  None),
            ('by2',   0,   True,  None,  None,  None))
        '''    
-# To make it more versatile... use func2string
+# To make it more versatile and adaptable... use func2string
 paramsa.add('a' + func2string[0], 1e-8, True, None, None, None)
 paramsb.add('b' + func2string[0], 1e-8, True, None, None, None)
 
@@ -133,18 +133,14 @@ for elem in func2string[1:]:
     paramsa.add('a' + elem, 0, True, None, None, None)
     paramsb.add('b' + elem, 0, True, None, None, None)
 
-
 paramsa.pretty_print()
 paramsb.pretty_print()
 
-
 def chisqstar(starrows, params):
     ''' Worker function '''
-    #nonlocal chip2fit
     def get_coeff():
         pardict = params.valuesdict()
         return np.asarray(pardict.values())
-        
     def getfitvalue(chipnum, x, y, pointvalue = True):
         if chipnum == 1 and chip2fit == 2: y = y + CHIP2YLEN 
         if chipnum == 2 and chip2fit == 1: y = y - CHIP2YLEN 
@@ -155,18 +151,9 @@ def chisqstar(starrows, params):
     # Input is the rows of the table corresponding to a single star so that we don't need to input a whole table
     starfluxes = starrows['flux']
     starfluxerrs = starrows['fluxerr']
-    deltas = [getfitvalue(row['chip'], row['x'], row['y']) for row in starrows]
-    #print starrows
-    #print "STAR FLUXES", starfluxes
-    #print starfluxerrs
-    #print "DELTAS", deltas
-    avgf = np.mean(starfluxes/deltas)
-    #print avgf
-    #print starfluxes/deltas
-    #print starfluxes/deltas - avgf
-    #print starfluxerrs/deltas
-    #print (starfluxes/deltas - avgf)/(starfluxerrs/deltas)
-    starresid = (starfluxes/deltas - avgf)/(starfluxerrs/deltas)#**2)
+    fits = [getfitvalue(row['chip'], row['x'], row['y']) for row in starrows]
+    avgf = np.mean(starfluxes/fits)
+    starresid = (starfluxes/fits - avgf)/(starfluxerrs/fits) # currently an Astropy Column
     return np.asarray(starresid).tolist()
    
 def chisqall1(params, func2fit, tab, chip2fit):
@@ -176,18 +163,21 @@ def chisqall1(params, func2fit, tab, chip2fit):
     # chisqstar(tab[np.where(tab['id'] == star)[0]])-- the chi squared for just one star
     #totalsum = np.sum([chisqstar(tab[np.where(tab['id'] == star)[0]]) for star in starIDarr])
     totalresid = np.asarray([chisqstar(tab[np.where(tab['id'] == star)[0]], params) for star in starIDarr])
-    return reduce(lambda x,y: x+y,totalresid) # flatten totalresid
-    
+    return reduce(lambda x, y: x + y, totalresid) # flatten totalresid
 
-
-#chip2fit = 1
-#resulta = minimize(chisqall1, paramsa, args=(func2fit, tab, chip2fit))
-#resparamsa = resulta.params
-#report_fit(resparamsa)
-#chip2fit = 2
-#resultb = minimize(chisqall1, paramsb, args=(func2fit, tab, chip2fit))
-#resparamsb = resultb.params
-#report_fit(resparamsb)
+start_time = time.time()  
+chip2fit = 1
+resulta = minimize(chisqall1, paramsa, args=(func2fit, tab, chip2fit))
+resparamsa = resulta.params
+report_fit(resparamsa)
+chip2fit = 2
+resultb = minimize(chisqall1, paramsb, args=(func2fit, tab, chip2fit))
+resparamsb = resultb.params
+report_fit(resparamsb)
+print "%s seconds for fitting the data looking at each star" % (time.time() - start_time)
+# 10.6s for tab[10000:10500] 2nd order poly
+# 19.17s for tab[10000:10500] 5th order poly
+# 110.4s for tab[10000:13000] 5th order poly
 
 #[[Variables]]
     #a1:    1.0004e-08 +/- 0.000359 (3596011.28%) (init= 1e-08)
@@ -202,6 +192,7 @@ def chisqall1(params, func2fit, tab, chip2fit):
     #bx2:   3.4463e-19 +/- 5.51e-15 (1599903.31%) (init= 0)
     #bxy:   3.2341e-21 +/- 5.22e-17 (1612960.81%) (init= 0)
     #by2:   6.2002e-22 +/- 1.07e-17 (1728280.46%) (init= 0)
+
 def chisqall(params, func2fit, tab, chip2fit):
     def get_coeff():
         pardict = params.valuesdict()
@@ -226,14 +217,10 @@ def chisqall(params, func2fit, tab, chip2fit):
         currstarfluxes = currstarrows['flux']
         fits = [getfitvalue(row['chip'], row['x'], row['y']) for row in currstarrows]
         curravgf = np.mean(currstarfluxes/fits)
-        #print '***'
-        #print curravgf
-        #print currf, currferr
-        #print currf/currferr
-        #print currf/currferr - currfit/currferr * curravgf
         resid = np.append(resid, currf/currferr - currfit/currferr * curravgf)
     return resid
-        
+
+start_time = time.time()  
 #chip2fit = 1
 #resulta = minimize(chisqall, paramsa, args=(func2fit, tab, chip2fit))
 #resparamsa = resulta.params
@@ -242,20 +229,10 @@ def chisqall(params, func2fit, tab, chip2fit):
 #resultb = minimize(chisqall, paramsb, args=(func2fit, tab, chip2fit))
 #resparamsb = resultb.params
 #report_fit(resparamsb)
-
-
-# Take the results parameters and break them up for the different chips
-#paramlista = [resultparams[key] for key in resultparams if key[0] == 'a'] # list of Parameter objects
-#resparamsa = Parameters()
-#for param in paramlista:
-#    resparamsa.add(param)
-#paramlistb = [resultparams[key] for key in resultparams if key[0] == 'b']
-#resparamsb = Parameters()
-#for param in paramlistb:
-#    resparamsb.add(param)
-    
-#result1 = minimize(chisqall1, params, args = (func2fit,tab))
-#report_fit(result1.params)
+print "%s seconds for fitting the data going through each row" % (time.time() - start_time)
+# 53.5s for tab[10000:10500] 2nd order poly
+# 99.63s for tab[10000:10500] 5th order poly
+# 633.5s for tab[10000:13000] 5th order poly
 
 #[[Variables]]
     #a1:    9.9981e-09 +/- 0.000343 (3425714.34%) (init= 1e-08)
@@ -270,11 +247,58 @@ def chisqall(params, func2fit, tab, chip2fit):
     #bx2:   4.6851e-19 +/- 7.21e-15 (1539138.84%) (init= 0)
     #bxy:   4.3965e-21 +/- 6.81e-17 (1548741.05%) (init= 0)
     #by2:   8.4287e-22 +/- 1.36e-17 (1615744.16%) (init= 0)
+'''
 
-#paramsa.pretty_print()
-#paramsb.pretty_print()
+#          (Name,  Value, Vary,  Min,  Max,   Expr)
+paramswavea = Parameters()
+paramswaveb = Parameters()
+paramswavea.add_many(
+           ('aA', 1e-20, True,  None,  None,  None),
+           ('au',   0,   True,  None,  None,  None),
+           ('av',   0,   True,  None,  None,  None),
+           ('aphi',  0,  True,  None,  None,  None))
+paramswaveb.add_many(
+           ('bA', 1e-20, True,  None,  None,  None),
+           ('bu',   0,   True,  None,  None,  None),
+           ('bv',   0,   True,  None,  None,  None),
+           ('bphi',  0,  True,  None,  None,  None))
+           
+def chisqstar(starrows, params):
+    """ Worker function """
+    def get_coeff():
+        pardict = params.valuesdict()
+        return np.asarray(pardict.values())
+    def getfitvalue(chipnum, x, y, pointvalue = True):
+        if chipnum == 1 and chip2fit == 2: y = y + CHIP2YLEN 
+        if chipnum == 2 and chip2fit == 1: y = y - CHIP2YLEN 
+        chipletter = 'a' if chip2fit == 1 else 'b'
+        A = params[chipletter + 'A'].value
+        u = params[chipletter + 'u'].value
+        v = params[chipletter + 'v'].value
+        phi = params[chipletter + 'phi'].value
+        modelwave = A * np.cos(2*np.pi * (u*x + v*y) + phi)
+        return modelwave
+    # Input is the rows of the table corresponding to a single star so that we don't need to input a whole table
+    starfluxes = starrows['flux']
+    starfluxerrs = starrows['fluxerr']
+    fits = [getfitvalue(row['chip'], row['x'], row['y']) for row in starrows]
+    avgf = np.mean(starfluxes/fits)
+    starresid = (starfluxes/fits - avgf)/(starfluxerrs/fits) # currently an Astropy Column
+    return np.asarray(starresid).tolist()
+   
+def chisqall1(params, func2fit, tab, chip2fit):
+    starIDarr = np.unique(tab['id'])
+    # np.where(tab['id'] == star)[0]                -- the indexes in tab where a star is located
+    # tab[np.where(tab['id'] == star)[0]]           -- "starrows" = the rows of tab for a certain star
+    # chisqstar(tab[np.where(tab['id'] == star)[0]])-- the chi squared for just one star
+    #totalsum = np.sum([chisqstar(tab[np.where(tab['id'] == star)[0]]) for star in starIDarr])
+    totalresid = np.asarray([chisqstar(tab[np.where(tab['id'] == star)[0]], params) for star in starIDarr])
+    return reduce(lambda x, y: x + y, totalresid) # flatten totalresid
 
 
+
+
+'''
 
 def example():
     # create data to be fitted
@@ -304,6 +328,10 @@ def example():
     resultparams = result.params
     print resultparams
     report_fit(result.params)
+
+###########################################
+###########################################
+###########################################
 
 from mpl_toolkits.mplot3d import Axes3D
 import matplotlib.pyplot as plt
