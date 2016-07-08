@@ -64,17 +64,17 @@ types = [int, int, int, np.float64, np.float64, np.float64, np.float64,
 tab = Table(data, names=names, dtype=types)
 tab.remove_columns(['filenum','d1','d2','d3'])   # remove the dummy columns  
 tab.sort(['id'])                                 # sort the table by starID
-tab = tab[10000:10500]
+tab = tab[10000:10050]
 starIDarr = np.unique(tab['id'])                 # collect all the star IDs
 
-#datafil = 'one.txt'
-#data = np.genfromtxt(path+datafil)
-#names = ['id', 'chip', 'x', 'y', 'mag', 'magerr']
-#types = [int, int, np.float64, np.float64, np.float64, np.float64]
-#
-#tab = Table(data, names = names, dtype = types)
-#tab.remove_row(0)
-#starIDarr = np.unique(tab['id'])     # collect all the star IDs
+datafil = 'one_noise.txt'
+data = np.genfromtxt(path+datafil)
+names = ['id', 'chip', 'x', 'y', 'mag', 'magerr']
+types = [int, int, np.float64, np.float64, np.float64, np.float64]
+
+tab = Table(data, names = names, dtype = types)
+tab.remove_row(0)
+starIDarr = np.unique(tab['id'])     # collect all the star IDs
 
 tab =  tab[np.where((tab['mag'] <= 25) & (tab['mag'] >= 13))[0]] # (13,25)
 print 'Len of tab after constraining the magnitudes'
@@ -92,7 +92,7 @@ tab =  tab[np.where(tab['flux']/tab['fluxerr'] > 5)[0]] # S/N ratio for flux is 
 ############ Function to Fit ##############
 ###########################################
 
-func2read, func2fit = norder2dpoly(1)
+func2read, func2fit = norder2dpoly(0)
 print func2read
 func2string = np.copy(func2read)
 k = 0
@@ -126,15 +126,43 @@ paramsb.add_many(
            ('by2',   0,   True,  None,  None,  None))
        '''    
 # To make it more versatile and adaptable... use func2string
-paramsa.add('a' + func2string[0], 1e-8, True, None, None, None)
-paramsb.add('b' + func2string[0], 1e-8, True, None, None, None)
+#paramsa.add('a' + func2string[0], 1e-8, True, None, None, None)
+#paramsb.add('b' + func2string[0], 1e-8, True, None, None, None)
 
-for elem in func2string[1:]:
-    paramsa.add('a' + elem, 0, True, None, None, None)
-    paramsb.add('b' + elem, 0, True, None, None, None)
+
+initialvalarra = np.zeros(len(func2string))
+initialvalarrb = np.zeros(len(func2string))
+initialvalarra[0] = initialvalarrb[0] = 1
+initialvalarra2 = [ -4.98347182e+00 ,  3.38102878e-04 ,  3.23045209e-03  , 8.47315131e-08,
+  -1.78686557e-07 , -5.05119015e-07]
+initialvalarrb2 = [ -1.41263472e-01 ,  1.35223560e-04  , 1.08437470e-04 ,  1.02392897e-07,
+  -2.29799058e-07 ,  1.20291872e-08]
+initialvalarra5 = np.asarray([ -1.64584435e-11,   4.97169658e-09 , -1.12197506e-08 , -1.22292028e-05,
+   1.03423671e-05 , -1.71735331e-06,   6.92467115e-09,  1.70430321e-09,
+  -5.79151447e-09  , 1.12096367e-09,  -2.28116739e-12,   6.62550707e-14,
+  -2.14688036e-13   ,1.20419983e-12,  -2.41487777e-13,   1.71972376e-16,
+   2.51453023e-16  ,-2.62636118e-16,   1.01128111e-16, -9.93518825e-17,
+   1.72057803e-17])
+initialvalarrb5 = np.asarray([  3.64125186e-06,   1.48570623e-03 , -3.39144333e-04 , -6.15906753e-06,
+   1.52775045e-06,  -3.49543054e-06,   9.46819175e-09,  -2.65781172e-09,
+   1.53540658e-09,   5.90413613e-09,  -6.03073373e-12,   2.59840035e-12,
+  -9.77822378e-13,  -1.58412464e-12,  -3.20367591e-12,   1.35366710e-15,
+  -8.74887202e-16,   5.43835810e-16,  -2.02095285e-16,   6.08237419e-16,
+   5.45353693e-16])
+   
+initialvalarra = initialvalarra
+initialvalarrb = initialvalarrb
+
+for elem, initialvala, initialvalb in zip(func2string, initialvalarra, initialvalarrb):
+    paramsa.add('a' + elem, initialvala, True, None, None, None)
+    paramsb.add('b' + elem, initialvalb, True, None, None, None)
 
 paramsa.pretty_print()
 paramsb.pretty_print()
+
+###########################################
+###### Fitting by grouping by star ########
+###########################################      
 
 def chisqstar(starrows, params):
     ''' Worker function '''
@@ -143,7 +171,7 @@ def chisqstar(starrows, params):
         return np.asarray(pardict.values())
     def getfitvalue(chipnum, x, y, pointvalue = True):
         if chipnum == 1 and chip2fit == 2: y = y + CHIP2YLEN 
-        if chipnum == 2 and chip2fit == 1: y = y - CHIP2YLEN 
+        if chipnum == 2 and chip2fit == 1: y = y - CHIP2YLEN
         funcvalues = func2fit(x,y)
         if not pointvalue:
             funcvalues[0] = np.ones(len(x))
@@ -154,6 +182,10 @@ def chisqstar(starrows, params):
     fits = [getfitvalue(row['chip'], row['x'], row['y']) for row in starrows]
     avgf = np.mean(starfluxes/fits)
     starresid = (starfluxes/fits - avgf)/(starfluxerrs/fits) # currently an Astropy Column
+    #print 'starfluxes', starfluxes
+    #print 'errors in star flux', starfluxerrs
+    #print 'fits', fits
+    #print 'avgf', avgf
     return np.asarray(starresid).tolist()
    
 def chisqall1(params, func2fit, tab, chip2fit):
@@ -163,35 +195,32 @@ def chisqall1(params, func2fit, tab, chip2fit):
     # chisqstar(tab[np.where(tab['id'] == star)[0]])-- the chi squared for just one star
     #totalsum = np.sum([chisqstar(tab[np.where(tab['id'] == star)[0]]) for star in starIDarr])
     totalresid = np.asarray([chisqstar(tab[np.where(tab['id'] == star)[0]], params) for star in starIDarr])
-    return reduce(lambda x, y: x + y, totalresid) # flatten totalresid
-
+    totalresid = reduce(lambda x, y: x + y, totalresid) # flatten totalresid
+    #print np.sum(np.asarray(totalresid)**2)
+    #print totalresid
+    global count
+    count+=1
+    return totalresid
+count = 0
 start_time = time.time()  
 chip2fit = 1
 resulta = minimize(chisqall1, paramsa, args=(func2fit, tab, chip2fit))
 resparamsa = resulta.params
-report_fit(resparamsa)
+report_fit(resparamsa, show_correl = False)
 chip2fit = 2
 resultb = minimize(chisqall1, paramsb, args=(func2fit, tab, chip2fit))
 resparamsb = resultb.params
-report_fit(resparamsb)
+report_fit(resparamsb, show_correl = False)
+print count
 print "%s seconds for fitting the data looking at each star" % (time.time() - start_time)
 # 10.6s for tab[10000:10500] 2nd order poly
 # 19.17s for tab[10000:10500] 5th order poly
 # 110.4s for tab[10000:13000] 5th order poly
 
-#[[Variables]]
-    #a1:    1.0004e-08 +/- 0.000359 (3596011.28%) (init= 1e-08)
-    #ax:    7.2187e-19 +/- 3.26e-14 (4509327.58%) (init= 0)
-    #ay:   -5.2086e-21 +/- 9.07e-16 (17414585.48%) (init= 0)
-    #ax2:   3.2464e-19 +/- 1.17e-14 (3597333.77%) (init= 0)
-    #axy:  -5.0623e-21 +/- 1.83e-16 (3605713.12%) (init= 0)
-    #ay2:   2.6085e-23 +/- 1.88e-18 (7188328.27%) (init= 0)
-    #b1:    1.0004e-08 +/- 0.000159 (1598519.08%) (init= 1e-08)
-    #bx:    7.6629e-19 +/- 3.84e-14 (5011457.83%) (init= 0)
-    #by:   -5.1308e-21 +/- 7.77e-16 (15145977.17%) (init= 0)
-    #bx2:   3.4463e-19 +/- 5.51e-15 (1599903.31%) (init= 0)
-    #bxy:   3.2341e-21 +/- 5.22e-17 (1612960.81%) (init= 0)
-    #by2:   6.2002e-22 +/- 1.07e-17 (1728280.46%) (init= 0)
+
+###########################################
+#### Fitting by going through each row ####
+###########################################
 
 def chisqall(params, func2fit, tab, chip2fit):
     def get_coeff():
@@ -200,7 +229,7 @@ def chisqall(params, func2fit, tab, chip2fit):
         
     def getfitvalue(chipnum, x, y, pointvalue = True):
         if chipnum == 1 and chip2fit == 2: y = y + CHIP2YLEN 
-        if chipnum == 2 and chip2fit == 1: y = y - CHIP2YLEN 
+        if chipnum == 2 and chip2fit == 1: y = y - CHIP2YLEN
         funcvalues = func2fit(x,y)
         if not pointvalue:
             funcvalues[0] = np.ones(len(x))
@@ -218,6 +247,7 @@ def chisqall(params, func2fit, tab, chip2fit):
         fits = [getfitvalue(row['chip'], row['x'], row['y']) for row in currstarrows]
         curravgf = np.mean(currstarfluxes/fits)
         resid = np.append(resid, currf/currferr - currfit/currferr * curravgf)
+    print np.sum(resid**2)
     return resid
 
 start_time = time.time()  
@@ -234,43 +264,29 @@ print "%s seconds for fitting the data going through each row" % (time.time() - 
 # 99.63s for tab[10000:10500] 5th order poly
 # 633.5s for tab[10000:13000] 5th order poly
 
-#[[Variables]]
-    #a1:    9.9981e-09 +/- 0.000343 (3425714.34%) (init= 1e-08)
-    #ax:    9.7294e-19 +/- 4.25e-14 (4367911.56%) (init= 0)
-    #ay:   -7.0347e-21 +/- 5.42e-16 (7705522.59%) (init= 0)
-    #ax2:   4.3754e-19 +/- 1.50e-14 (3427206.49%) (init= 0)
-    #axy:  -6.8228e-21 +/- 2.34e-16 (3432324.49%) (init= 0)
-    #ay2:   3.5126e-23 +/- 1.60e-18 (4568830.68%) (init= 0)
-    #b1:    9.9980e-09 +/- 0.000154 (1537755.05%) (init= 1e-08)
-    #bx:    1.0419e-18 +/- 5.30e-14 (5084391.73%) (init= 0)
-    #by:   -6.9845e-21 +/- 6.57e-16 (9413613.65%) (init= 0)
-    #bx2:   4.6851e-19 +/- 7.21e-15 (1539138.84%) (init= 0)
-    #bxy:   4.3965e-21 +/- 6.81e-17 (1548741.05%) (init= 0)
-    #by2:   8.4287e-22 +/- 1.36e-17 (1615744.16%) (init= 0)
 '''
-
 #          (Name,  Value, Vary,  Min,  Max,   Expr)
 paramswavea = Parameters()
 paramswaveb = Parameters()
 paramswavea.add_many(
-           ('aA', 1e-20, True,  None,  None,  None),
-           ('au',   0,   True,  None,  None,  None),
+           ('aA',   1e20,   True,  None,  None,  None),
+           ('au',   -1e-10,   True,  None,  None,  None),
            ('av',   0,   True,  None,  None,  None),
-           ('aphi',  0,  True,  None,  None,  None))
+           ('aphi', 0,   True,  None,  None,  None))
 paramswaveb.add_many(
-           ('bA', 1e-20, True,  None,  None,  None),
-           ('bu',   0,   True,  None,  None,  None),
+           ('bA',   1e20,   True,  None,  None,  None),
+           ('bu',   -1e-10,   True,  None,  None,  None),
            ('bv',   0,   True,  None,  None,  None),
-           ('bphi',  0,  True,  None,  None,  None))
+           ('bphi', 0,   True,  None,  None,  None))
            
-def chisqstar(starrows, params):
+def chisqstarwave(starrows, params):
     """ Worker function """
     def get_coeff():
         pardict = params.valuesdict()
         return np.asarray(pardict.values())
     def getfitvalue(chipnum, x, y, pointvalue = True):
         if chipnum == 1 and chip2fit == 2: y = y + CHIP2YLEN 
-        if chipnum == 2 and chip2fit == 1: y = y - CHIP2YLEN 
+        if chipnum == 2 and chip2fit == 1: y = y - CHIP2YLEN
         chipletter = 'a' if chip2fit == 1 else 'b'
         A = params[chipletter + 'A'].value
         u = params[chipletter + 'u'].value
@@ -286,17 +302,27 @@ def chisqstar(starrows, params):
     starresid = (starfluxes/fits - avgf)/(starfluxerrs/fits) # currently an Astropy Column
     return np.asarray(starresid).tolist()
    
-def chisqall1(params, func2fit, tab, chip2fit):
+def chisqallwave(params, func2fit, tab, chip2fit):
     starIDarr = np.unique(tab['id'])
     # np.where(tab['id'] == star)[0]                -- the indexes in tab where a star is located
     # tab[np.where(tab['id'] == star)[0]]           -- "starrows" = the rows of tab for a certain star
     # chisqstar(tab[np.where(tab['id'] == star)[0]])-- the chi squared for just one star
     #totalsum = np.sum([chisqstar(tab[np.where(tab['id'] == star)[0]]) for star in starIDarr])
-    totalresid = np.asarray([chisqstar(tab[np.where(tab['id'] == star)[0]], params) for star in starIDarr])
+    totalresid = np.asarray([chisqstarwave(tab[np.where(tab['id'] == star)[0]], params) for star in starIDarr])
     return reduce(lambda x, y: x + y, totalresid) # flatten totalresid
 
-
-
+start_time = time.time()  
+#chip2fit = 1
+#resulta = minimize(chisqallwave, paramswavea, args=(func2fit, tab, chip2fit))
+#resparamsa = resulta.params
+#report_fit(resparamsa, show_correl = False)
+#chip2fit = 2
+#resultb = minimize(chisqallwave, paramswaveb, args=(func2fit, tab, chip2fit))
+#resparamsb = resultb.params
+#report_fit(resparamsb, show_correl = False)
+print "%s seconds for fitting the data to a sine model going through each star" % (time.time() - start_time)
+# 51.5s for tab[10000:10500] 
+# 104.68s for tab[10000:13000]
 
 '''
 
@@ -324,9 +350,19 @@ def example():
     result = minimize(fcn2min, params, args=(x, data))
     # calculate final result
     final = data + result.residual
+    plt.plot(x,data)
+    #plt.plot(x,final)
+    plt.show()
     print result.residual
     resultparams = result.params
     print resultparams
+    amp = resultparams['amp'].value
+    decay = resultparams['decay'].value
+    shift = resultparams['shift'].value
+    omega = resultparams['omega'].value
+    model = amp * np.sin(x * omega + shift) * np.exp(-x*x*decay) 
+    plt.plot(x,model)
+    plt.show()
     report_fit(result.params)
 
 ###########################################
@@ -336,29 +372,38 @@ def example():
 from mpl_toolkits.mplot3d import Axes3D
 import matplotlib.pyplot as plt
 
-def convert2mesh(chipnum, resultparams, xbin = 10, ybin = 5):
+def convert2mesh(chipnum, resultparams, xbin = 10, ybin = 5, wave = False):
     if chipnum == 2:
         xpixel = np.linspace(0, CHIP2XLEN, xbin)
         ypixel = np.linspace(0, CHIP2YLEN, ybin)
     else: # chipnum = 1
         xpixel = np.linspace(0, CHIP1XLEN, xbin)
-        ypixel = np.linspace(0, CHIP2YLEN, ybin) 
+        #ypixel = np.linspace(0, CHIP2YLEN + CHIP1YLEN, ybin) 
+        ypixel = np.linspace(0, CHIP1YLEN, ybin) 
     xx, yy = np.meshgrid(xpixel, ypixel, sparse = True, copy = False) #why copy false??
-
-    fmesh = func2fit(xx,yy)
-    if chipnum == 1:
-        yy += CHIP2YLEN
+    if not wave: # if it's a polynomial
+        fmesh = func2fit(xx,yy)
+        if chipnum == 1:
+            yy = yy + CHIP2YLEN
+        resultdict = resultparams.valuesdict()
+        coeff = np.asarray(resultdict.values())
+        zzfit = [[0 for i in xpixel] for j in ypixel]
+        k = 0
+        while k < len(coeff):
+            zzfit += coeff[k]*fmesh[k]
+            k+=1
+        return [xx, yy, zzfit]
+    else: # It's a wave function
+        chipletter = 'a' if chipnum == 1 else 'b'
+        A = resultparams[chipletter + 'A'].value
+        u = resultparams[chipletter + 'u'].value
+        v = resultparams[chipletter + 'v'].value
+        phi = resultparams[chipletter + 'phi'].value
+        modelwave = A * np.cos(2*np.pi * (u*xx + v*yy) + phi)
+        return [xx,yy,modelwave]
     
-    resultdict = resultparams.valuesdict()
-    coeff = np.asarray(resultdict.values())
-    zzfit = [[0 for i in xpixel] for j in ypixel]
-    k = 0
-    while k < len(coeff):
-        zzfit += coeff[k]*fmesh[k]
-        k+=1
-    return [xx, yy, zzfit]
-
 def plotthis(a,b):
+    # a, b are the xx yy and zz (2d arrays)
     X1,Y1,Z1 = a
     X2,Y2,Z2 = b
     fig = plt.figure()
@@ -378,6 +423,22 @@ def plotdelflux(tab):
     plt.show()
 plotdelflux(tab)
 
+def plotimg(title = ''):
+    xxa, yya, zza = convert2mesh(chipnum=1, resultparams=resparamsa, wave=False)
+    xxb, yyb, zzb = convert2mesh(chipnum=2, resultparams=resparamsb, wave=False)
+    imga = zza
+    imgb = zzb
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+    ax.set_title(title)
+    ax.set_xlabel('X Pixel', fontsize = 18);  ax.set_ylabel('Y Pixel', fontsize = 18)
+    extent=(0,4096,0,4096)    
+    cax = ax.imshow(np.double(imga), cmap = 'gray_r', interpolation='nearest', origin='lower', extent=extent)
+    cax = ax.imshow(np.double(imgb), cmap = 'gray_r', interpolation='nearest', origin='lower', extent=extent)
+    fig.colorbar(cax, fraction=0.046, pad=0.04)
+    return fig
+imgbin = plotimg(title = 'Average delta flux in bins')
+plt.show(imgbin)
 def plotall(tab, a,b):
     X1,Y1,Z1 = a
     X2,Y2,Z2 = b
@@ -390,6 +451,7 @@ def plotall(tab, a,b):
     y = [row['y'] if row['chip'] == 2 else row['y'] + CHIP2YLEN for row in tab]
     delflux = tab['flux'] - tab['avgflux']
     ax.scatter(x,y,delflux, s = 3)
-    #ax.set_zlim([-1e-10,1e-10])
+    #ax.set_zlim([-5,5])
+    plt.legend()
     return fig
 plt.show(plotall(tab,convert2mesh(chipnum=1, resultparams=resparamsa), convert2mesh(chipnum=2, resultparams=resparamsb)))
