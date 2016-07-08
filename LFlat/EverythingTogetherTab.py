@@ -7,7 +7,7 @@ import time
 start_time = time.time()
 
 # import functions from DataInfoTab (which deals with getting and filtering the data)
-from DataInfoTab import remove_stars_tab, sigmaclip, sigmaclip_starmag, make_avgmagandflux, sigmaclip_delmagall, bin_filter, extract_data_dicts
+from DataInfoTab import remove_stars_tab, sigmaclip, sigmaclip_starmag, make_avgmagandflux, sigmaclip_delmagdelflux, bin_filter, extract_data_dicts
 
 CHIP1XLEN = CHIP2XLEN = 4096 
 CHIP1YLEN = CHIP2YLEN = 2048
@@ -30,13 +30,13 @@ tab = Table(data, names=names, dtype=types)
 tab.remove_columns(['d1','d2','d3']) # remove the dummy columns  
 tab.sort(['id'])                     # sort the table by starID
 #tab = tab[82384:82410]
-tab = tab[80000:90000]
+#tab = tab[80000:85000]
 starIDarr = np.unique(tab['id'])     # collect all the star IDs
 starttablen = len(tab)
 startstarnum = len(starIDarr)
 timeread = time.time()
 print len(tab)
-tab =  tab[np.where(tab['mag'] < 28)[0]] # only contain the values of less than 28
+tab =  tab[np.where((tab['mag'] <= 25) & (tab['mag'] >= 13))[0]] # (13,25)
 print len(tab)
 print "%s seconds for reading in the data" % (timeread - start_time)
 ##########################################################
@@ -57,13 +57,13 @@ tab, starIDarr, removestarlist = remove_stars_tab(tab, starIDarr, min_num_obs = 
 # Create the absolute magnitude and errors columns
 tab, starIDarr = make_avgmagandflux(tab, starIDarr)
 # Remove any observations that have too high of a delta magnitude on a large scale
-low, high = 3, 3
-tab, starIDarr = sigmaclip_delmagall(tab, starIDarr, low, high)
+tab, starIDarr = sigmaclip_delmagdelflux(tab, starIDarr, flux = True, mag = True, low = 3, high = 3)
 # Bin the data using the delta magnitude and sigma clip each bin
 xpixelarr, ypixelarr = np.arange(CHIP1XLEN), np.arange(CHIP1YLEN + CHIP2YLEN)
 xbin = ybin = 10
 low, high = 3, 3
-tab, zz, zzdelm, zztabindex = bin_filter(tab, xpixelarr, ypixelarr, xbin, ybin, low, high)
+#tab, zz, zzdelm, zztabindex = bin_filter(tab, xpixelarr, ypixelarr, xbin, ybin, low, high)
+print 'Number of observations after filtering: ', len(tab)
 timefilter = time.time()
 print "%s seconds for filtering the data" % (timefilter - timeread)
 
@@ -116,7 +116,10 @@ def func(x, y, n = 5):
         return funclist, f # return the list in case we want to look at how the function is
     funclist, f = norder2dpoly(n)
     func2optimize = f(x,y)
-    func2optimize[0] = np.ones(len(x)) # because f(x,y)[0] = 1 and not [1,1,...,1,1]
+    try:
+        func2optimize[0] = np.ones(len(x)) # because f(x,y)[0] = 1 and not [1,1,...,1,1]
+    except TypeError:                      # but if we are passing a single value and not
+        pass                               # an array, then just leave it
     return func2optimize
     #return [1+x*0, x, y, x**2, x*y, y**2, x**3, x**2*y, x*y**2, y**3, x**4, x**3*y, x**2*y**2, x*y**3, y**4, x**5, x**4*y, x**3*y**2, x**2*y**3, x*y**4, y**5]
     #return [x**2, y**2, x*y, x, y, 1+x*0] # 3rd order
@@ -126,12 +129,28 @@ def getfit(tab, xpixel, ypixel, chipnum, n = 5):
     '''
     NEED TO ADD DESCRIPTION
     '''
-    x = [row['x'] for row in tab if row['chip'] == chipnum]
-    if chipnum == 2:
-        y = [row['y'] for row in tab if row['chip'] == 2]
-    else:
-        y = [row['y'] + CHIP2YLEN for row in tab if row['chip'] == 1]
-    z = [row['mag'] - row['avgmag'] for row in tab if row['chip'] == chipnum]
+    starsinboth = np.array([])
+    for star in starIDarr:
+        starrows = tab[np.where(tab['id']==star)[0]]
+        chipavg = np.mean(starrows['chip'])
+        if chipavg != 1.0 and chipavg != 2.0:
+            starsinboth = np.append(starsinboth, star)
+    rows = [row for row in tab if row['chip'] == chipnum or (row['id'] in starsinboth and row['chip'] != chipnum)]
+    #for row in rows:
+    #    print row['id'], row['chip'], row['x'], row['y']
+    x = [row['x'] for row in rows]
+    # Use what's commented below if we set the origin of chip 1 to ypixel = 2048
+    # and then ypixel1 should be np.linspace(0, CHIP1YLEN, ybin) and then fit it
+    # and then add 2048 to it AFTER the fit
+    #if chipnum == 2:
+    #    y = [row['y'] if row['chip'] == 2 else row['y'] + CHIP2YLEN for row in rows]
+    #else: # chipnum == 1
+    #    y = [row['y'] if row['chip'] == 1 else row['y'] - CHIP2YLEN for row in rows]
+
+    y = [row['y'] if  row['chip'] == 2 else row['y'] + CHIP2YLEN for row in rows]
+
+    z = [row['flux'] - row['avgflux'] for row in rows]
+    
     x = np.asarray(x)
     y = np.asarray(y)
     z = np.asarray(z)
@@ -142,7 +161,6 @@ def getfit(tab, xpixel, ypixel, chipnum, n = 5):
     A = np.array(f).T
     B = z
     coeff, rsum, rank, s = np.linalg.lstsq(A, B)
-    
     zfit = np.zeros(len(x))
     zzfit = [[0 for i in xpixel] for j in ypixel]
     k = 0
@@ -158,14 +176,19 @@ def getfit(tab, xpixel, ypixel, chipnum, n = 5):
         # returns an array of the error in the fit
         return np.abs(zfit - z)
     resarr = get_res(z, zfit)
-    return [x, y, z, zfit, xx, yy, zzfit, rsum, resarr]
+    # If using bottom of chip 1 as origin for fititng chip 1
+    #if chipnum ==1:
+    #    y += 2048
+    #    yy += 2048
+    return [x, y, z, zfit, xx, yy, zzfit, coeff, rsum, resarr]
 
 xpixel1 = np.linspace(0, CHIP1XLEN, xbin)
 ypixel1 = np.linspace(CHIP2YLEN, CHIP1YLEN + CHIP2YLEN, ybin)
+#ypixel1 = np.linspace(0, CHIP1YLEN, ybin)
 xpixel2 = np.linspace(0, CHIP2XLEN, xbin)
 ypixel2 = np.linspace(0, CHIP2YLEN, ybin)
-x1, y1, z1, zfit1, xx1, yy1, zzfit1, rsum1, resarr1 = getfit(tab, xpixel1, ypixel1, chipnum = 1, n = 5)
-x2, y2, z2, zfit2, xx2, yy2, zzfit2, rsum2, resarr2 = getfit(tab, xpixel2, ypixel2, chipnum = 2,n = 5)
+x1, y1, z1, zfit1, xx1, yy1, zzfit1, coeff1, rsum1, resarr1 = getfit(tab, xpixel1, ypixel1, chipnum = 1, n = 5)
+x2, y2, z2, zfit2, xx2, yy2, zzfit2, coeff2, rsum2, resarr2 = getfit(tab, xpixel2, ypixel2, chipnum = 2, n = 5)
 timefit = time.time()
 print "%s seconds for fitting the data" % (timefit - timefilter)
 ##########################################################
@@ -209,8 +232,8 @@ def plot3dfit2chips(x1,y1,z1,X1,Y1,Z1, x2,y2,z2,X2,Y2,Z2,title = '', scatter = F
     ax.plot_wireframe(X2,Y2,Z2, rstride=1, cstride=1,color='blue', label = "CHIP2")
     ax.set_title(title)
     if scatter:
-        ax.scatter(x1,y1,z1, s= 50, alpha = .05,c='red')
-        ax.scatter(x2,y2,z2, s= 50, alpha = .05,c='blue')
+        ax.scatter(x1,y1,z1, s= 2, alpha = .05, c='red')
+        ax.scatter(x2,y2,z2, s= 2, alpha = .05, c='blue')
     #for i in range(len(z)):
     #    zpoint = z[i]
     #    xpoint, ypoint = x[i],y[i]
@@ -237,8 +260,8 @@ plt.show(plot3dfit2chips(x1,y1,z1,xx1,yy1,zzfit1,x2,y2,z2,xx2,yy2,zzfit2, title 
 plt.show(plot3dfit2chips(x1,y1,z1,xx1,yy1,zzfit1,x2,y2,z2,xx2,yy2,zzfit2, title = 'Fit of all delta magnitudes in 3D',scatter=True))
 
 # Image plotting
-imgbin = plotimg(zz.T, title = 'Average delta magnitude in bins')
-plt.show(imgbin)
+#imgbin = plotimg(zz.T, title = 'Average delta magnitude in bins')
+#plt.show(imgbin)
 #imgfit = plotimg(zzfit1, title = 'Fit of all delta magnitudes')
 #plt.show(imgfit)
 
