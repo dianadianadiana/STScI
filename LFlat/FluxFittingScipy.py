@@ -63,9 +63,18 @@ data = np.genfromtxt(path + datafil)
 names = ['id', 'filenum', 'chip', 'x', 'y', 'mag', 'magerr', 'd1', 'd2', 'd3']
 types = [int, int, int, np.float64, np.float64, np.float64, np.float64,
          float, float, float]
+         
 
 tab = Table(data, names=names, dtype=types)
 tab.remove_columns(['filenum','d1','d2','d3'])   # remove the dummy columns  
+
+datafil = 'f606w_phot_r5.txt'
+data = np.genfromtxt(path + datafil)
+
+names = ['id', 'image', 'chip', 'x', 'y', 'mag', 'magerr']
+types = [int, int, int, np.float64, np.float64, np.float64, np.float64]
+tab = Table(data, names=names, dtype=types)
+tab.remove_columns(['image'])
 chosen = np.random.choice(len(tab), 7000, replace = False)
 tab = tab[chosen]
 tab.sort(['id'])                                 # sort the table by starID
@@ -97,7 +106,7 @@ tab =  tab[np.where(tab['flux']/tab['fluxerr'] > 5)[0]] # S/N ratio for flux is 
 ###########################################
 ############ Function to Fit ##############
 ###########################################
-n = 5
+n = 2
 func2read, func2fit = norder2dpoly(n)
 print 'Function that is being fit:', func2read
 func2string = np.copy(func2read)
@@ -188,49 +197,19 @@ def chisqstar(starrows, p):
         #starrows, p = inputs
         starfluxes = starrows['flux']
         starfluxerrs = starrows['fluxerr']
-        funcPlane = lambda p, x, y: p[0]
-        func1 =     lambda p, x, y: p[0] + p[1]*x + p[2]*y
-        func2 =     lambda p, x, y: p[0] + p[1]*x + p[2]*y + p[3]*x**2 + p[4]*x*y + p[5]*y**2
-        if n == 0:
-            func = funcPlane
-        elif n == 1:
-            func = func1
-        elif n == 2:
-            func = func2
-        #func =     lambda p, x, y: np.sum(func2fit(x,y) * np.asarray(p))
+        func = lambda p, x, y: np.sum(func2fit(x,y) * np.asarray(p))
         fits = [func(p,row['x'], row['y']) if row['chip'] == 2 else func(p,row['x'] + CHIP2YLEN, row['y']) for row in starrows]
-        #fits = [getfitvalue(row['chip'], row['x'], row['y']) for row in starrows]
         avgf = np.mean(starfluxes/fits)
         starresid = (starfluxes/fits - avgf)/(starfluxerrs/fits) # currently an Astropy Column
-        #print 'starfluxes', starfluxes
-        #print 'errors in star flux', starfluxerrs
-        #print 'fits', fits
-        #print 'avgf', avgf
         return np.asarray(starresid).tolist()
 
 def chisqstar2(starx,stary,starflux,starfluxerr,p):
-#def chisqstar(inputs):
         ''' Worker function '''
-        # Input is the rows of the table corresponding to a single star so that we don't need to input a whole table
-        #starrows, p = inputs
-        funcPlane = lambda p, x, y: p[0]
-        func1 =     lambda p, x, y: p[0] + p[1]*x + p[2]*y
-        func2 =     lambda p, x, y: p[0] + p[1]*x + p[2]*y + p[3]*x**2 + p[4]*x*y + p[5]*y**2
-        if n == 0:
-            func = funcPlane
-        elif n == 1:
-            func = func1
-        elif n == 2:
-            func = func2
-
+        # TESTING fn : inputs are starx,stary,starflux,starfluxerr,params
+        func = lambda p, x, y: np.sum(func2fit(x,y) * np.asarray(p))
         fits = [func(p,i,j) for i,j in zip(starx,stary)]
-        #fits = [func(p,row['x'], row['y']) if row['chip'] == 2 else func(p,row['x'], row['y'] + CHIP2YLEN) for row in starrows]
         avgf = np.mean(starflux/fits)
         starresid = (starflux/fits - avgf)/(starfluxerr/fits) # currently an Astropy Column
-        #print 'starfluxes', starfluxes
-        #print 'errors in star flux', starfluxerrs
-        #print 'fits', fits
-        #print 'avgf', avgf
         return np.asarray(starresid).tolist()
         
 def chisqall1(params, tab, chip2fit, num_cpu = 4):
@@ -287,7 +266,7 @@ start_time = time.time()
 
 tabreduced = np.copy(tab)
 tabreduced = Table(tabreduced)
-tabreduced.remove_columns(['mag','magerr','avgmag','avgmagerr', 'avgflux', 'avgfluxerr'])
+tabreduced.remove_columns(['mag','magerr','avgmag','avgmagerr','avgflux','avgfluxerr'])
 
 chip2fit = 1
 count = 0
@@ -393,7 +372,7 @@ def plotdelflux(tab):
     plt.show()
 plotdelflux(tab)
 
-def plotall(tab, a,b):
+def plotall(tab, a,b, lim):
     X1,Y1,Z1 = a
     X2,Y2,Z2 = b
     fig = plt.figure()
@@ -405,10 +384,13 @@ def plotall(tab, a,b):
     y = [row['y'] if row['chip'] == 2 else row['y'] + CHIP2YLEN for row in tab]
     delflux = tab['flux'] - tab['avgflux']
     ax.scatter(x,y,delflux, s = 3)
-    #ax.set_zlim([-5,5])
+    ax.set_zlim([-lim, lim])
     plt.legend()
     return fig
-plt.show(plotall(tab,convert2mesh(chipnum=1, resultparams=result1[0]), convert2mesh(chipnum=2, resultparams=result2[0])))
+    
+    
+plt.show(plotall(tab,convert2mesh(chipnum=1, resultparams=initialvalarra), convert2mesh(chipnum=2, resultparams=initialvalarrb), lim = 5))
+plt.show(plotall(tab,convert2mesh(chipnum=1, resultparams=result1[0]), convert2mesh(chipnum=2, resultparams=result2[0]), lim = 100))
 
 
 
