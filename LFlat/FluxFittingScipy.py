@@ -97,7 +97,7 @@ tab =  tab[np.where(tab['flux']/tab['fluxerr'] > 5)[0]] # S/N ratio for flux is 
 ###########################################
 ############ Function to Fit ##############
 ###########################################
-n = 0
+n = 5
 func2read, func2fit = norder2dpoly(n)
 print 'Function that is being fit:', func2read
 func2string = np.copy(func2read)
@@ -155,6 +155,7 @@ def getfit(tab, xpixel, ypixel, chipnum, n = 5):
         return np.abs(zfit - z)
     resarr = get_res(z, zfit)
     return [x, y, z, zfit, xx, yy, zzfit, coeff, rsum, resarr]
+    
 xbin = 10
 ybin = 5
 xpixel1 = np.linspace(0, CHIP1XLEN, xbin)
@@ -167,6 +168,11 @@ x2, y2, z2, zfit2, xx2, yy2, zzfit2, coeff2, rsum2, resarr2 = getfit(tab, xpixel
 initialvalarra = coeff1
 initialvalarrb = coeff2
 
+print 'Length of tab and starIDarr after everything'
+lentab0 = len(tab)
+lenstar0 = len(starIDarr)
+print len(tab)
+print len(starIDarr)
 print 'Initial:'
 print initialvalarra
 print initialvalarrb
@@ -175,10 +181,11 @@ print initialvalarrb
 ###### Fitting by grouping by star ########
 ###########################################    
 from multiprocessing import Pool
-def chisqstar(inputs):
+def chisqstar(starrows, p):
+#def chisqstar(inputs):
         ''' Worker function '''
         # Input is the rows of the table corresponding to a single star so that we don't need to input a whole table
-        starrows, p = inputs
+        #starrows, p = inputs
         starfluxes = starrows['flux']
         starfluxerrs = starrows['fluxerr']
         funcPlane = lambda p, x, y: p[0]
@@ -190,7 +197,7 @@ def chisqstar(inputs):
             func = func1
         elif n == 2:
             func = func2
-        
+        #func =     lambda p, x, y: np.sum(func2fit(x,y) * np.asarray(p))
         fits = [func(p,row['x'], row['y']) if row['chip'] == 2 else func(p,row['x'] + CHIP2YLEN, row['y']) for row in starrows]
         #fits = [getfitvalue(row['chip'], row['x'], row['y']) for row in starrows]
         avgf = np.mean(starfluxes/fits)
@@ -201,8 +208,32 @@ def chisqstar(inputs):
         #print 'avgf', avgf
         return np.asarray(starresid).tolist()
 
-   
-def chisqall1(params, tab, chip2fit, num_cpu = 8):
+def chisqstar2(starx,stary,starflux,starfluxerr,p):
+#def chisqstar(inputs):
+        ''' Worker function '''
+        # Input is the rows of the table corresponding to a single star so that we don't need to input a whole table
+        #starrows, p = inputs
+        funcPlane = lambda p, x, y: p[0]
+        func1 =     lambda p, x, y: p[0] + p[1]*x + p[2]*y
+        func2 =     lambda p, x, y: p[0] + p[1]*x + p[2]*y + p[3]*x**2 + p[4]*x*y + p[5]*y**2
+        if n == 0:
+            func = funcPlane
+        elif n == 1:
+            func = func1
+        elif n == 2:
+            func = func2
+
+        fits = [func(p,i,j) for i,j in zip(starx,stary)]
+        #fits = [func(p,row['x'], row['y']) if row['chip'] == 2 else func(p,row['x'], row['y'] + CHIP2YLEN) for row in starrows]
+        avgf = np.mean(starflux/fits)
+        starresid = (starflux/fits - avgf)/(starfluxerr/fits) # currently an Astropy Column
+        #print 'starfluxes', starfluxes
+        #print 'errors in star flux', starfluxerrs
+        #print 'fits', fits
+        #print 'avgf', avgf
+        return np.asarray(starresid).tolist()
+        
+def chisqall1(params, tab, chip2fit, num_cpu = 4):
     starIDarr = np.unique(tab['id'])
     stars2consid = starIDarr
     stars2consid = np.array([])
@@ -211,67 +242,71 @@ def chisqall1(params, tab, chip2fit, num_cpu = 8):
         chipavg = np.mean(starrows['chip'])
         if (chipavg != 1.0 and chipavg != 2.0) or (int(chipavg) == int(chip2fit)):
             stars2consid = np.append(stars2consid, star)
-            
-    runs = [(tab[np.where(tab['id'] == star)[0]], params) for star in stars2consid]
-    pool = Pool(processes=num_cpu)
-    results = pool.map_async(chisqstar, runs)
-    pool.close()
-    pool.join()
+       
+    global count
+    if count % 20 == 0: print count 
+    count+=1     
     
-    final = [] 
-    for res in results.get():
-        final.append(res)
-        
-    final = np.asarray(final)
-    totalresid = reduce(lambda x, y: x + y, final) # flatten totalresid
-    return totalresid
+    # Doing it with multiprocessing
+    #runs = [(tab[np.where(tab['id'] == star)[0]], params) for star in stars2consid]
+#    pool = Pool(processes=num_cpu)
+#    results = pool.map_async(chisqstar, runs)
+#    pool.close()
+#    pool.join()
+#    
+#    final = [] 
+#    for res in results.get():
+#        final.append(res)
+#    final = np.asarray(final)
+#    totalresid = reduce(lambda x, y: x + y, final) # flatten totalresid
+#
+#    return totalresid
     
+    # Doing it by unwrapping the information first instead of in the worker function
+    #totalresid = np.array([])
+    #for star in stars2consid:
+    #    starrows = tab[np.where(tab['id'] == star)[0]]
+    #    starx = np.asarray(starrows['x'])
+    #    stary = np.asarray([row['y'] if row['chip'] == 2 else row['y'] + CHIP2YLEN for row in starrows])
+    #    starflux = np.asarray(starrows['flux'])
+    #    starfluxerr = np.asarray(starrows['fluxerr'])
+    #    totalresid = np.append(totalresid, chisqstar2(starx,stary,starflux,starfluxerr,params))
+    #return totalresid
+    
+    # Doing it the original way
     # np.where(tab['id'] == star)[0]                -- the indexes in tab where a star is located
     # tab[np.where(tab['id'] == star)[0]]           -- "starrows" = the rows of tab for a certain star
     # chisqstar(tab[np.where(tab['id'] == star)[0]])-- the chi squared for just one star
     #totalsum = np.sum([chisqstar(tab[np.where(tab['id'] == star)[0]]) for star in starIDarr])
     totalresid = np.asarray([chisqstar(tab[np.where(tab['id'] == star)[0]], params) for star in stars2consid])
     totalresid = reduce(lambda x, y: x + y, totalresid) # flatten totalresid
-    global count
-    if count % 20 == 0: print count 
-    count+=1
+
     return totalresid
-count = 0
+
 start_time = time.time()  
 
-
-def getxy(tab, chip2fit):
-    starIDarr = np.unique(tab['id'])
-    stars2consid = starIDarr
-    stars2consid = np.array([])
-    for star in starIDarr:
-        starrows = tab[np.where(tab['id']==star)[0]]
-        chipavg = np.mean(starrows['chip'])
-        if (chipavg != 1.0 and chipavg != 2.0) or (int(chipavg) == int(chip2fit)):
-            stars2consid = np.append(stars2consid, star)
-    xall = np.array([])
-    yall = np.array([])
-    for star in stars2consid:
-        starrows = tab[np.where(tab['id']==star)[0]]
-        starx = starrows['x']
-        stary = starrows['y']
-        starchip = starrows['chip']
-        for x, y, chip in zip(starx, stary, starchip):
-            if chip == 1:
-                yall = np.append(yall, y + CHIP2YLEN)
-            else:
-                yall = np.append(yall, y)
-            xall = np.append(xall, x)
-    return [xall, yall]
-    
-#x1, y1 = getxy(tab, 1)
-#x2, y2 = getxy(tab, 2)
+tabreduced = np.copy(tab)
+tabreduced = Table(tabreduced)
+tabreduced.remove_columns(['mag','magerr','avgmag','avgmagerr', 'avgflux', 'avgfluxerr'])
 
 chip2fit = 1
-result1 = op.leastsq(chisqall1, initialvalarra, args = (tab, chip2fit), maxfev = 200)
+count = 0
+print 'Starting chip1'
+result1 = op.leastsq(chisqall1, initialvalarra, args = (tabreduced, chip2fit), maxfev = 200)
 chip2fit = 2
-result2 = op.leastsq(chisqall1, initialvalarrb, args = (tab, chip2fit), maxfev = 200)
-print "%s seconds for fitting the data going through each row" % (time.time() - start_time)
+count = 0
+print 'Starting chip2'
+result2 = op.leastsq(chisqall1, initialvalarrb, args = (tabreduced, chip2fit), maxfev = 200)
+end_time = time.time()
+print "%s seconds for fitting the data going through each row" % (end_time - start_time)
+print lentab0/(end_time - start_time), ' = how many observation are being processed per second' 
+
+print 'End:'
+print result1[0]
+print result2[0]
+print count
+
+# July 11
 # ~ 22 mins for 3000 data points for n=2 for maxfev = 200
 # 135 s for 116 data points for n=2 for maxfev = 200
 # 10.6s for 342 data points for n=0 for maxfev = 200 no multi (32.26/s) -- it would take 52 mins for 100,000 data points
@@ -280,11 +315,23 @@ print "%s seconds for fitting the data going through each row" % (time.time() - 
 # 19s for 293 data points for n=0 for maxfev = 200 (multi of 4) (15/s)
 # 88s for 3122 data points for n=0 for maxfev = 200 no multi (35.47/s)
 # 140s for 3101 data points for n=0 for maxfev = 200 no multi (22.15/s)
+# 248s for 164 data points for n=1 for maxfev = 500 (multi of 8) (less than 1 per second) bad fit
+# 31s for 192 data points for n=1 for maxfev = 500 no multi bad fit
 
-print 'End:'
-print result1[0]
-print result2[0]
+# July 12
+# 1.435s for 88 data points, 22 stars for n=0 maxfev = 200 no multi, using tabreduced (61/s)
+# 2.204s for 88 data points, 22 stars for n=0 maxfev = 200 no multi, using tab        (40/s)
+# 26.19s for 79 data points, 21 stars for n=2 maxfev = 200 no multi, using tabreduced (3/s)   bad fit (not enough points)
+# 41.06s for 79 data points, 21 stars for n=2 maxfev = 200 no multi, using tab        (1.9/s) bad fit (not enough points)
+# 74.74s for 70 data points, 19 stars for n=2 maxfev = 200 4  multi, using tabreduced (.93/s) bad fit (not enough points)
+# 95.24s for 70 data points, 19 stars for n=2 maxfev = 200 4  multi, using tab        (.73/s) bad fit (not enough points)
+# 29.59s for 113 data points, 28 stars for n=2 maxfev = 200 no multi, using tabreduced & breaking apart x and y (3.8/s) bad fit
+# 52.1s for 113 data points, 28 stars for n=2 maxfev = 200 no multi, using tab & breaking apart x and y (2.1/s) bad fit
 
+
+###########################################
+############### Plotting ##################
+###########################################
 
 from mpl_toolkits.mplot3d import Axes3D
 import matplotlib.pyplot as plt
@@ -325,7 +372,6 @@ def convert2mesh(chipnum, resultparams, xbin = 10, ybin = 5, wave = False):
         k+=1
     return [xx, yy, zzfit]
     
-    
 def plotthis(a,b):
     # a, b are the xx yy and zz (2d arrays)
     X1,Y1,Z1 = a
@@ -346,6 +392,7 @@ def plotdelflux(tab):
     ax.scatter(x,y,delflux)
     plt.show()
 plotdelflux(tab)
+
 def plotall(tab, a,b):
     X1,Y1,Z1 = a
     X2,Y2,Z2 = b
@@ -366,4 +413,3 @@ plt.show(plotall(tab,convert2mesh(chipnum=1, resultparams=result1[0]), convert2m
 
 
 
-print count
