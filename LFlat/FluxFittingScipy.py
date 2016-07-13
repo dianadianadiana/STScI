@@ -112,15 +112,15 @@ tab = Table(data, names=names, dtype=types)
 tab.remove_columns(['filenum','d1','d2','d3'])   # remove the dummy columns  
 
 ############ Read in NEW data :: comment/uncomment this snippet
-datafil = 'f606w_phot_r5.txt'
-data = np.genfromtxt(path + datafil)
-names = ['id', 'image', 'chip', 'x', 'y', 'mag', 'magerr']
-types = [int, int, int, np.float64, np.float64, np.float64, np.float64]
-tab = Table(data, names=names, dtype=types)
-tab.remove_columns(['image'])
+#datafil = 'f606w_phot_r5.txt'
+#data = np.genfromtxt(path + datafil)
+#names = ['id', 'image', 'chip', 'x', 'y', 'mag', 'magerr']
+#types = [int, int, int, np.float64, np.float64, np.float64, np.float64]
+#tab = Table(data, names=names, dtype=types)
+#tab.remove_columns(['image'])
 ############
 
-chosen = np.random.choice(len(tab), 20000, replace = False)
+chosen = np.random.choice(len(tab), 7000, replace = False)
 tab = tab[chosen]
 tab.sort(['id'])                                 # sort the table by starID
 starIDarr = np.unique(tab['id'])                 # collect all the star IDs
@@ -169,7 +169,7 @@ print 'Function that is being fit:', func2read
 ########### Initial Conditions ############
 ###########################################
 
-def getfit(tab, func2fit, xpixel, ypixel, chipnum):
+def getfit(tab, func2fit, chipnum):
     '''
     Purpose
     -------
@@ -179,20 +179,15 @@ def getfit(tab, func2fit, xpixel, ypixel, chipnum):
     ----------
     tab:        The Astropy table with all the information
     func2fit:   The function that is being optimized          
-    xpixel:     1D array of the x pixel values (used for plotting)
-    ypixel:     1D array of the y pixel values (used for plotting)
     chipnum:    The chip number that we are currently fitting
     
     Returns
     -------
-    [x, y, z, zfit, xx, yy, zzfit, coeff, rsum, resarr]
+    [x, y, z, zfit, coeff, rsum, resarr]
     x:          X pixel values that were considered in the fit
     y:          Y pixel values that were considered in the fit
     z:          Delta flux values that were considered in the fit corresponding to (x,y)
     zfit:       Values of the delta fluxes at the points (x,y)
-    xx:         2D array of x pixel values (used for plotting)
-    yy:         2D array of y pixel values (used for plotting)
-    zzfit:      2D array of fitted delta flux values (used for plotting)
     coeff:      Coefficients for the function that was fitted
     rsum:       The chi-squared value of the fit
     resarr:     1D array of the absolute value of the 
@@ -205,19 +200,17 @@ def getfit(tab, func2fit, xpixel, ypixel, chipnum):
         2) Set up x to be the x pixel values;
             Set up y to be the y pixel values (and add 2048 if the chipnum is 1);
             Set up z to be the delta flux values
-        3) Create the meshgrid (used for plotting)
-        4) Do the Least Squares Fitting on x,y,z
-        5) Fill in zfit and zzfit
-    NOTE:
-        NOT SURE IF WE REALLY NEED TO RETURN THE xx, yy, zzfit BECAUSE WE DO THAT LATER ON
+        3) Do the Least Squares Fitting on x,y,z
+        4) Fill in zfit 
     '''
-    starsinboth = np.array([])
+    starIDarr = np.unique(tab['id'])
+    stars2consid = np.array([])
     for star in starIDarr:
-        starrows = tab[np.where(tab['id']==star)[0]]
+        starrows = tab[np.where(tab['id'] == star)[0]]
         chipavg = np.mean(starrows['chip'])
         if chipavg != 1.0 and chipavg != 2.0:
-            starsinboth = np.append(starsinboth, star)
-    rows = [row for row in tab if row['chip'] == chipnum or (row['id'] in starsinboth and row['chip'] != chipnum)]
+            stars2consid = np.append(stars2consid, star)
+    rows = [row for row in tab if row['chip'] == chipnum or (row['id'] in stars2consid and row['chip'] != chipnum)]
 
     x = [row['x'] for row in rows]
     y = [row['y'] if  row['chip'] == 2 else row['y'] + CHIP2YLEN for row in rows]
@@ -227,37 +220,28 @@ def getfit(tab, func2fit, xpixel, ypixel, chipnum):
     y = np.asarray(y)
     z = np.asarray(z)
     
-    xx, yy = np.meshgrid(xpixel, ypixel, sparse = True, copy = False) #why copy false??
     f = func2fit(x,y)
-    fmesh = func2fit(xx,yy)
     try:                             # The zeroth element is an int 1 and not an array of 1s
         f[0] = np.ones(len(x))
-        fmesh[0] = np.ones(len(xx))
     except TypeError:
         pass
     
     A = np.array(f).T
     B = z
     coeff, rsum, rank, s = np.linalg.lstsq(A, B)
-    zfit = np.zeros(len(x))
-    zzfit = [[0 for i in xpixel] for j in ypixel]
-    k = 0
-    while k < len(coeff):
-        zfit += coeff[k]*f[k]
-        zzfit += coeff[k]*fmesh[k]
-        k+=1
-    # Examples:
-    # zfit = coeff[0]*x**2 + coeff[1]*y**2 + ... === coeff[0]*f[0] + ...
-    # Zfit = coeff[0]*X**2 + coeff[1]*Y**2 + ... === coeff[0]*fmesh[0] + ...
+
+    zfit = np.sum([co*fn for co,fn in zip(coeff, f)])
+    # Ex: zfit = coeff[0]*x**2 + coeff[1]*y**2 + ... === coeff[0]*f[0] + ...
     
     def get_res(z, zfit):
         # returns an array of the error in the fit
         return np.abs(zfit - z)
     resarr = get_res(z, zfit)
+    return [x, y, z, zfit, coeff, rsum, resarr]
     return [x, y, z, zfit, xx, yy, zzfit, coeff, rsum, resarr]
     
-x1, y1, z1, zfit1, xx1, yy1, zzfit1, coeff1, rsum1, resarr1 = getfit(tab, func2fit, XPIX1, YPIX1, chipnum = 1)
-x2, y2, z2, zfit2, xx2, yy2, zzfit2, coeff2, rsum2, resarr2 = getfit(tab, func2fit, XPIX2, YPIX2, chipnum = 2)
+x1, y1, z1, zfit1, coeff1, rsum1, resarr1 = getfit(tab, func2fit, chipnum = 1)
+x2, y2, z2, zfit2, coeff2, rsum2, resarr2 = getfit(tab, func2fit, chipnum = 2)
 
 initialcoeff1 = coeff1
 initialcoeff2 = coeff2
@@ -308,7 +292,7 @@ def chisqall(params, tab, chip2fit, num_cpu = 4):
     
     stars2consid = np.array([])
     for star in starIDarr:
-        starrows = tab[np.where(tab['id']==star)[0]]
+        starrows = tab[np.where(tab['id'] == star)[0]]
         chipavg = np.mean(starrows['chip'])
         if (chipavg != 1.0 and chipavg != 2.0) or (int(chipavg) == int(chip2fit)):
             stars2consid = np.append(stars2consid, star)
@@ -378,29 +362,6 @@ print 'End:'
 print finalcoeff1
 print finalcoeff2
 
-# July 11
-# ~ 22 mins for 3000 data points for n=2 for maxfev = 200
-# 135 s for 116 data points for n=2 for maxfev = 200
-# 10.6s for 342 data points for n=0 for maxfev = 200 no multi (32.26/s) -- it would take 52 mins for 100,000 data points
-# 16s for 316 data points for n=0 for maxfev = 200 (multi of 2) (19.7/s)
-# 23s for 405 data points for n=0 for maxfev = 200 (multi of 8) (17.6/s)
-# 19s for 293 data points for n=0 for maxfev = 200 (multi of 4) (15/s)
-# 88s for 3122 data points for n=0 for maxfev = 200 no multi (35.47/s)
-# 140s for 3101 data points for n=0 for maxfev = 200 no multi (22.15/s)
-# 248s for 164 data points for n=1 for maxfev = 500 (multi of 8) (less than 1 per second) bad fit
-# 31s for 192 data points for n=1 for maxfev = 500 no multi bad fit
-
-# July 12
-# 1.435s for 88 data points, 22 stars for n=0 maxfev = 200 no multi, using tabreduced (61/s)
-# 2.204s for 88 data points, 22 stars for n=0 maxfev = 200 no multi, using tab        (40/s)
-# 26.19s for 79 data points, 21 stars for n=2 maxfev = 200 no multi, using tabreduced (3/s)   bad fit (not enough points)
-# 41.06s for 79 data points, 21 stars for n=2 maxfev = 200 no multi, using tab        (1.9/s) bad fit (not enough points)
-# 74.74s for 70 data points, 19 stars for n=2 maxfev = 200 4  multi, using tabreduced (.93/s) bad fit (not enough points)
-# 95.24s for 70 data points, 19 stars for n=2 maxfev = 200 4  multi, using tab        (.73/s) bad fit (not enough points)
-# 29.59s for 113 data points, 28 stars for n=2 maxfev = 200 no multi, using tabreduced & breaking apart x and y (3.8/s) bad fit
-# 52.1s for 113 data points, 28 stars for n=2 maxfev = 200 no multi, using tab & breaking apart x and y (2.1/s) bad fit
-
-
 ###########################################
 ############### Plotting ##################
 ###########################################
@@ -408,7 +369,7 @@ print finalcoeff2
 from mpl_toolkits.mplot3d import Axes3D
 import matplotlib.pyplot as plt
 
-def convert2mesh(chipnum, resultparams):
+def convert2mesh(func2fit, chipnum, coeff):
     if chipnum == 1:
         xpixel, ypixel = XPIX1, YPIX1
     else: # chipnum = 2
@@ -416,7 +377,7 @@ def convert2mesh(chipnum, resultparams):
 
     xx, yy = np.meshgrid(xpixel, ypixel, sparse = True, copy = False) 
     fmesh = func2fit(xx, yy)
-    coeff = np.asarray(resultparams)
+    coeff = np.asarray(coeff)
     zzfit = [[0 for i in xpixel] for j in ypixel]
     k = 0
     while k < len(coeff):
@@ -432,11 +393,13 @@ def plotthis(a, b):
     ax = fig.add_subplot(111, projection='3d')
     ax.plot_wireframe(X1,Y1,Z1, rstride=1, cstride=1,color='red', label = "CHIP1")
     ax.plot_wireframe(X2,Y2,Z2, rstride=1, cstride=1,color='blue', label = "CHIP2")
-    #ax.set_zlim([-2,2])
+    ax.set_zlim([-2,2])
     return fig
     
-plt.show(plotthis(convert2mesh(chipnum=1, resultparams=initialcoeff1), convert2mesh(chipnum=2, resultparams=initialcoeff2)))
-plt.show(plotthis(convert2mesh(chipnum=1, resultparams=finalcoeff1), convert2mesh(chipnum=2, resultparams=finalcoeff2)))
+plt.show(plotthis(convert2mesh(func2fit, chipnum=1, coeff=initialcoeff1),\
+                  convert2mesh(func2fit, chipnum=2, coeff=initialcoeff2)))
+plt.show(plotthis(convert2mesh(func2fit, chipnum=1, coeff=finalcoeff1),  \
+                  convert2mesh(func2fit, chipnum=2, coeff=finalcoeff2)))
 
 def plotdelflux(tab):
     x = tab['x']
@@ -464,8 +427,8 @@ def plotall(tab, a, b, lim):
     ax.set_zlim([-lim, lim])
     plt.legend()
     return fig   
-plt.show(plotall(tab,convert2mesh(chipnum=1, resultparams=initialcoeff1), convert2mesh(chipnum=2, resultparams=initialcoeff2), lim = 5))
-plt.show(plotall(tab,convert2mesh(chipnum=1, resultparams=finalcoeff1), convert2mesh(chipnum=2, resultparams=finalcoeff2), lim = 5))
+plt.show(plotall(tab,convert2mesh(func2fit, chipnum=1, coeff=initialcoeff1), convert2mesh(func2fit, chipnum=2, coeff=initialcoeff2), lim = 5))
+plt.show(plotall(tab,convert2mesh(func2fit, chipnum=1, coeff=finalcoeff1), convert2mesh(func2fit, chipnum=2, coeff=finalcoeff2), lim = 5))
 
 def plotimg(img, title = ''):
     fig = plt.figure()
@@ -481,7 +444,7 @@ def plot2imgs(img1, img2, title =''):
     fig = plt.figure()
     ax1 = fig.add_subplot(211)
     #ax1.set_xlabel('X Pixel', fontsize = 18);  ax1.set_ylabel('Y Pixel', fontsize = 18)
-    extent1 = (0, CHIP1XLEN + CHIP2XLEN, CHIP2YLEN, CHIP1YLEN + CHIP2YLEN)
+    extent1 = (0, CHIP1XLEN, CHIP2YLEN, CHIP1YLEN + CHIP2YLEN)
     cax1 = ax1.imshow(np.double(img1), cmap = 'gray_r', interpolation='nearest', origin='lower', extent=extent1)
     ax2 = fig.add_subplot(212)
     extent2 = (0, CHIP2XLEN, 0, CHIP2YLEN)
@@ -489,9 +452,12 @@ def plot2imgs(img1, img2, title =''):
     #fig.colorbar(cax1, fraction=0.046, pad=0.04)
     return fig
 
-imginitial = plot2imgs(zzfit1, zzfit2, title = 'Initial: Chip 1 on top, Chip 2 on bottom')
+zzfitinit1 = convert2mesh(func2fit, chipnum=1, coeff=initialcoeff1)[2]
+zzfitinit2 = convert2mesh(func2fit, chipnum=2, coeff=initialcoeff2)[2]
+imginitial = plot2imgs(zzfitinit1, zzfitinit2, title = 'Initial: Chip 1 on top, Chip 2 on bottom')
 plt.show(imginitial)
-zzfit1 = convert2mesh(chipnum=1, resultparams=finalcoeff1)[2]
-zzfit2 = convert2mesh(chipnum=2, resultparams=finalcoeff2)[2]
+
+zzfit1 = convert2mesh(func2fit, chipnum=1, coeff=finalcoeff1)[2]
+zzfit2 = convert2mesh(func2fit, chipnum=2, coeff=finalcoeff2)[2]
 imgfinal = plot2imgs(zzfit1, zzfit2, title = 'Final: Chip 1 on top, Chip 2 on bottom')
 plt.show(imgfinal)
