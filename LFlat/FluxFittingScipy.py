@@ -25,10 +25,12 @@ def norder2dpoly(n):
             So the degree of x starts at a certain number (currnum) and decreases
             by one, while the degree of y starts at 0 and increase by one until currnum
         Note: 
-            lambdify needs to take in a list and not array; and for a 2d
+            * lambdify needs to take in a list and not array; and for a 2d
             polynomial, the constant term needs to be 1 + 0*x but lambdify
             makes it just 1, which becomes a problem when trying to fit the 
             function and hence why the 0th element turns into np.ones(len(x))
+            * Also just found out (2 weeks later after making this), that there 
+            exists numpy.polynomial.polynomial.polyvander2d which does what I made
         '''
         x = Symbol('x')
         y = Symbol('y')
@@ -40,10 +42,20 @@ def norder2dpoly(n):
                 funcarr = np.append(funcarr, x**xi * y**yi)
                 yi += 1
                 xi -= 1
-        funclist = funcarr.tolist() # lambdify only takes in lists and not arrays
-        f = lambdify((x, y), funclist) # lambdify looks at 1 + 0*x as 1 and makes f[0] = 1
-        return funclist, f # return the list in case we want to look at how the function is
+        funclist = funcarr.tolist()     # lambdify only takes in lists and not arrays
+        f = lambdify((x, y), funclist)  # lambdify looks at 1 + 0*x as 1 and makes f[0] = 1
+        return funclist, f              # return the list in case we want to look at how the function is
 
+def norder2dcheb(nx, ny):
+    import numpy.polynomial.chebyshev as cheb
+    x = Symbol('x')
+    y = Symbol('y')
+    funcarr = cheb.chebvander2d(x,y,[nx,ny])
+    funcarr = funcarr[0]            # Because chebvander2d returns a 2d matrix
+    funclist = funcarr.tolist()     # lambdify only takes in lists and not arrays
+    f = lambdify((x, y), funclist)  # Note: lambdify looks at 1 as 1 and makes f[0] = 1 and not an array
+    return funclist, f
+    
 ###########################################
 ###########################################
 ###########################################
@@ -68,14 +80,15 @@ types = [int, int, int, np.float64, np.float64, np.float64, np.float64,
 tab = Table(data, names=names, dtype=types)
 tab.remove_columns(['filenum','d1','d2','d3'])   # remove the dummy columns  
 
-datafil = 'f606w_phot_r5.txt'
-data = np.genfromtxt(path + datafil)
+#datafil = 'f606w_phot_r5.txt'
+#data = np.genfromtxt(path + datafil)
+#
+#names = ['id', 'image', 'chip', 'x', 'y', 'mag', 'magerr']
+#types = [int, int, int, np.float64, np.float64, np.float64, np.float64]
+#tab = Table(data, names=names, dtype=types)
+#tab.remove_columns(['image'])
 
-names = ['id', 'image', 'chip', 'x', 'y', 'mag', 'magerr']
-types = [int, int, int, np.float64, np.float64, np.float64, np.float64]
-tab = Table(data, names=names, dtype=types)
-tab.remove_columns(['image'])
-chosen = np.random.choice(len(tab), 7000, replace = False)
+chosen = np.random.choice(len(tab), 8000, replace = False)
 tab = tab[chosen]
 tab.sort(['id'])                                 # sort the table by starID
 starIDarr = np.unique(tab['id'])                 # collect all the star IDs
@@ -106,8 +119,10 @@ tab =  tab[np.where(tab['flux']/tab['fluxerr'] > 5)[0]] # S/N ratio for flux is 
 ###########################################
 ############ Function to Fit ##############
 ###########################################
-n = 2
+n = 5
 func2read, func2fit = norder2dpoly(n)
+nx = ny = 5
+func2read, func2fit = norder2dcheb(nx,ny)
 print 'Function that is being fit:', func2read
 func2string = np.copy(func2read)
 k = 0
@@ -259,7 +274,6 @@ def chisqall1(params, tab, chip2fit, num_cpu = 4):
     #totalsum = np.sum([chisqstar(tab[np.where(tab['id'] == star)[0]]) for star in starIDarr])
     totalresid = np.asarray([chisqstar(tab[np.where(tab['id'] == star)[0]], params) for star in stars2consid])
     totalresid = reduce(lambda x, y: x + y, totalresid) # flatten totalresid
-
     return totalresid
 
 start_time = time.time()  
@@ -283,7 +297,6 @@ print lentab0/(end_time - start_time), ' = how many observation are being proces
 print 'End:'
 print result1[0]
 print result2[0]
-print count
 
 # July 11
 # ~ 22 mins for 3000 data points for n=2 for maxfev = 200
@@ -314,24 +327,6 @@ print count
 
 from mpl_toolkits.mplot3d import Axes3D
 import matplotlib.pyplot as plt
-def plot3dfit2chips(x1,y1,z1,X1,Y1,Z1, x2,y2,z2,X2,Y2,Z2,title = '', scatter = False):    
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection='3d')
-    ax.plot_wireframe(X1,Y1,Z1, rstride=1, cstride=1,color='red', label = "CHIP1")
-    ax.plot_wireframe(X2,Y2,Z2, rstride=1, cstride=1,color='blue', label = "CHIP2")
-    ax.set_title(title)
-    if scatter:
-        #ax.scatter(x1,y1,z1, s= 2, alpha = .5, c='red')
-        #ax.scatter(x2,y2,z2, s= 2, alpha = .5, c='blue')
-        y = [row['y'] if row['chip'] == 2 else row['y'] + CHIP2YLEN for row in tab]
-        ax.scatter(tab['x'], y, tab['flux']-tab['avgflux'], s= 2, alpha = .5)
-    ax.set_xlabel('X Pixel')
-    ax.set_ylabel('Y Pixel')
-    plt.legend()
-    #ax.set_zlim([-.1,.1])
-    return fig
-
-#plt.show(plot3dfit2chips(x1,y1,z1,xx1,yy1,zzfit1, x2,y2,z2,xx2,yy2,zzfit2,title = '', scatter = True))
 
 def convert2mesh(chipnum, resultparams, xbin = 10, ybin = 5, wave = False):
     if chipnum == 2:
@@ -359,7 +354,9 @@ def plotthis(a,b):
     ax = fig.add_subplot(111, projection='3d')
     ax.plot_wireframe(X1,Y1,Z1, rstride=1, cstride=1,color='red', label = "CHIP1")
     ax.plot_wireframe(X2,Y2,Z2, rstride=1, cstride=1,color='blue', label = "CHIP2")
+    #ax.set_zlim([-2,2])
     return fig
+plt.show(plotthis(convert2mesh(chipnum=1, resultparams=initialvalarra), convert2mesh(chipnum=2, resultparams=initialvalarrb)))
 plt.show(plotthis(convert2mesh(chipnum=1, resultparams=result1[0]), convert2mesh(chipnum=2, resultparams=result2[0])))
 
 def plotdelflux(tab):
@@ -372,7 +369,7 @@ def plotdelflux(tab):
     plt.show()
 plotdelflux(tab)
 
-def plotall(tab, a,b, lim):
+def plotall(tab,a,b,lim):
     X1,Y1,Z1 = a
     X2,Y2,Z2 = b
     fig = plt.figure()
@@ -386,12 +383,36 @@ def plotall(tab, a,b, lim):
     ax.scatter(x,y,delflux, s = 3)
     ax.set_zlim([-lim, lim])
     plt.legend()
-    return fig
-    
-    
+    return fig   
 plt.show(plotall(tab,convert2mesh(chipnum=1, resultparams=initialvalarra), convert2mesh(chipnum=2, resultparams=initialvalarrb), lim = 5))
 plt.show(plotall(tab,convert2mesh(chipnum=1, resultparams=result1[0]), convert2mesh(chipnum=2, resultparams=result2[0]), lim = 100))
 
+def plotimg(img, title = ''):
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+    ax.set_title(title)
+    ax.set_xlabel('X Pixel', fontsize = 18);  ax.set_ylabel('Y Pixel', fontsize = 18)
+    extent=(0,4096,0,4096)    
+    cax = ax.imshow(np.double(img), cmap = 'gray_r', interpolation='nearest', origin='lower', extent=extent)
+    fig.colorbar(cax, fraction=0.046, pad=0.04)
+    return fig
+    
+def plot2imgs(img1, img2, title =''):
+    fig = plt.figure()
+    ax1 = fig.add_subplot(211)
+    #ax1.set_xlabel('X Pixel', fontsize = 18);  ax1.set_ylabel('Y Pixel', fontsize = 18)
+    extent1 = (0,4096,2048,4096)
+    cax1 = ax1.imshow(np.double(img1), cmap = 'gray_r', interpolation='nearest', origin='lower', extent=extent1)
+    ax2 = fig.add_subplot(212)
+    extent2 = (0,4096,0,2048)
+    cax2 = ax2.imshow(np.double(img2), cmap = 'gray_r', interpolation='nearest', origin='lower', extent=extent2)
+    #fig.colorbar(cax1, fraction=0.046, pad=0.04)
 
+    return fig
 
-
+imgfit = plot2imgs(zzfit1, zzfit2, title = 'Chip 1 on top, Chip 2 on bottom')
+plt.show(imgfit)
+zzfit1 = convert2mesh(chipnum=1, resultparams=initialvalarra)[2]
+zzfit2 = convert2mesh(chipnum=2, resultparams=initialvalarrb)[2]
+imgfit = plot2imgs(zzfit1, zzfit2, title = 'Chip 1 on top, Chip 2 on bottom')
+plt.show(imgfit)
