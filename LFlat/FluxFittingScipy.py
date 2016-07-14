@@ -8,7 +8,8 @@ CHIP1YLEN = CHIP2YLEN = 2048
 XBIN = 10
 YBIN = 5
 XPIX1 = np.linspace(0,         CHIP1XLEN,             XBIN)
-YPIX1 = np.linspace(CHIP2YLEN, CHIP1YLEN + CHIP2YLEN, YBIN)
+#YPIX1 = np.linspace(CHIP2YLEN, CHIP1YLEN + CHIP2YLEN, YBIN)
+YPIX1 = np.linspace(0, CHIP1YLEN, YBIN)
 XPIX2 = np.linspace(0,         CHIP2XLEN,             XBIN)
 YPIX2 = np.linspace(0,         CHIP2YLEN,             YBIN)
 
@@ -94,8 +95,6 @@ def norder2dcheb(nx, ny):
 ###########################################
 
 from astropy.table import Table, Column
-from DataInfoTab import remove_stars_tab, convertmag2flux, convertflux2mag,\
-                        make_avgmagandflux, sigmaclip_delmagdelflux
 
 # Read in the data
 path = '/Users/dkossakowski/Desktop/Data/'
@@ -120,7 +119,7 @@ tab.remove_columns(['filenum','d1','d2','d3'])   # remove the dummy columns
 #tab.remove_columns(['image'])
 ############
 
-chosen = np.random.choice(len(tab), 7000, replace = False)
+chosen = np.random.choice(len(tab), 10000, replace = False)
 tab = tab[chosen]
 tab.sort(['id'])                                 # sort the table by starID
 starIDarr = np.unique(tab['id'])                 # collect all the star IDs
@@ -133,7 +132,7 @@ starIDarr = np.unique(tab['id'])                 # collect all the star IDs
 #
 #tab = Table(data, names = names, dtype = types)
 #tab.remove_row(0)
-#chosen = np.random.choice(len(tab), 500, replace = False)
+#chosen = np.random.choice(len(tab), 300, replace = False)
 #tab = tab[chosen]
 #starIDarr = np.unique(tab['id'])     # collect all the star IDs
 ############
@@ -146,7 +145,9 @@ starIDarr = np.unique(tab['id'])                 # collect all the star IDs
 ###########################################
 ########## Filtering the Table ############
 ###########################################
-                                                                                       # These functions are imported form DataInfoTab.py
+from DataInfoTab import remove_stars_tab, convertmag2flux, convertflux2mag,\
+                        make_avgmagandflux, sigmaclip_delmagdelflux                    # These functions are imported form DataInfoTab.py
+                        
 tab =  tab[np.where((tab['mag'] <= 25) & (tab['mag'] >= 13))[0]]                       # Constrain magnitudes (13,25)
 tab, starIDarr, removestarlist = remove_stars_tab(tab, starIDarr, min_num_obs = 4)     # Remove rows with less than min num of observations
 tab, starIDarr = make_avgmagandflux(tab, starIDarr)                                    # Create columns ('avgmag', 'avgmagerr', 'flux', 'fluxerr', 'avgflux', 'avgfluxerr')
@@ -203,6 +204,7 @@ def getfit(tab, func2fit, chipnum):
         3) Do the Least Squares Fitting on x,y,z
         4) Fill in zfit 
     '''
+    
     starIDarr = np.unique(tab['id'])
     stars2consid = np.array([])
     for star in starIDarr:
@@ -213,7 +215,11 @@ def getfit(tab, func2fit, chipnum):
     rows = [row for row in tab if row['chip'] == chipnum or (row['id'] in stars2consid and row['chip'] != chipnum)]
 
     x = [row['x'] for row in rows]
-    y = [row['y'] if  row['chip'] == 2 else row['y'] + CHIP2YLEN for row in rows]
+    if chipnum == 1:
+        y = [row['y'] if  row['chip'] == 1 else row['y'] - CHIP1YLEN for row in rows]
+    else:
+        y = [row['y'] if  row['chip'] == 2 else row['y'] + CHIP2YLEN for row in rows]
+
     z = [row['flux'] - row['avgflux'] for row in rows]
     
     x = np.asarray(x)
@@ -272,7 +278,12 @@ def chisqstar(starrows, p):
         starfluxes = starrows['flux']
         starfluxerrs = starrows['fluxerr']
         func = lambda p, x, y: np.sum(func2fit(x,y) * np.asarray(p))     # The 'delta' function
-        fits = [func(p, row['x'], row['y']) if row['chip'] == 2 else func(p, row['x'], row['y']+ CHIP2YLEN) for row in starrows]
+        if chip2fit == 1:
+            stary = [row['y'] if  row['chip'] == 1 else row['y'] - CHIP1YLEN for row in starrows]
+        else:
+            stary = [row['y'] if  row['chip'] == 2 else row['y'] + CHIP1YLEN for row in starrows]
+        fits = [func(p, row['x'], y) for row, y in zip(starrows, stary)]
+        #fits = [func(p, row['x'], row['y']) if row['chip'] == 2 else func(p, row['x'], row['y'] + CHIP2YLEN) for row in starrows]
         avgf = np.mean(starfluxes/fits)                                  # Our 'expected' value for the Flux
         starresid = (starfluxes/fits - avgf)/(starfluxerrs/fits)         # Currently an Astropy Column
         return np.asarray(starresid).tolist()                            # Want to return as list so it is possible to flatten totalresid
@@ -296,7 +307,7 @@ def chisqall(params, tab, chip2fit, num_cpu = 4):
         chipavg = np.mean(starrows['chip'])
         if (chipavg != 1.0 and chipavg != 2.0) or (int(chipavg) == int(chip2fit)):
             stars2consid = np.append(stars2consid, star)
-       
+
     global count
     if count % 20 == 0: print count 
     count+=1     
@@ -344,20 +355,26 @@ tabreduced = np.copy(tab)
 tabreduced = Table(tabreduced)
 tabreduced.remove_columns(['mag','magerr','avgmag','avgmagerr','avgflux','avgfluxerr'])
 
+maxfev = 200
 chip2fit = 1
 count = 0
 print 'Starting chip1'
-result1 = op.leastsq(chisqall, initialcoeff1, args = (tabreduced, chip2fit), maxfev = 200)
+result1 = op.leastsq(chisqall, initialcoeff1, args = (tabreduced, chip2fit), maxfev = maxfev)
 chip2fit = 2
 count = 0
 print 'Starting chip2'
-result2 = op.leastsq(chisqall, initialcoeff2, args = (tabreduced, chip2fit), maxfev = 200)
+result2 = op.leastsq(chisqall, initialcoeff2, args = (tabreduced, chip2fit), maxfev = maxfev)
 end_time = time.time()
-print "%s seconds for fitting the data going through each row" % (end_time - start_time)
+print "%s seconds for fitting the data going through each star" % (end_time - start_time)
 print lentab0/(end_time - start_time), ' = how many observation are being processed per second' 
+print 'maxfev is ', maxfev
 
-finalcoeff1 = result1[0]
-finalcoeff2 = result2[0]
+try:
+    finalcoeff1 = result1[0]
+    finalcoeff2 = result2[0]
+except KeyError:
+    finalcoeff1 = result1.x
+    finalcoeff2 = result2.x
 print 'End:'
 print finalcoeff1
 print finalcoeff2
@@ -391,9 +408,9 @@ def plotthis(a, b):
     X2,Y2,Z2 = b
     fig = plt.figure()
     ax = fig.add_subplot(111, projection='3d')
-    ax.plot_wireframe(X1,Y1,Z1, rstride=1, cstride=1,color='red', label = "CHIP1")
-    ax.plot_wireframe(X2,Y2,Z2, rstride=1, cstride=1,color='blue', label = "CHIP2")
-    ax.set_zlim([-2,2])
+    ax.plot_wireframe(X1,Y1,Z1, rstride=1, cstride=1, color='red',  label = "CHIP1")
+    ax.plot_wireframe(X2,Y2,Z2, rstride=1, cstride=1, color='blue', label = "CHIP2")
+    #ax.set_zlim([-2,2])
     return fig
     
 plt.show(plotthis(convert2mesh(func2fit, chipnum=1, coeff=initialcoeff1),\
@@ -417,8 +434,8 @@ def plotall(tab, a, b, lim):
     X2,Y2,Z2 = b
     fig = plt.figure()
     ax = fig.add_subplot(111, projection='3d')
-    ax.plot_wireframe(X1,Y1,Z1, rstride=1, cstride=1,color='red', label = "CHIP1")
-    ax.plot_wireframe(X2,Y2,Z2, rstride=1, cstride=1,color='blue', label = "CHIP2")
+    ax.plot_wireframe(X1,Y1,Z1, rstride=1, cstride=1, color='red',  label = "CHIP1")
+    ax.plot_wireframe(X2,Y2,Z2, rstride=1, cstride=1, color='blue', label = "CHIP2")
     
     x = tab['x']
     y = [row['y'] if row['chip'] == 2 else row['y'] + CHIP2YLEN for row in tab]
@@ -427,8 +444,10 @@ def plotall(tab, a, b, lim):
     ax.set_zlim([-lim, lim])
     plt.legend()
     return fig   
-plt.show(plotall(tab,convert2mesh(func2fit, chipnum=1, coeff=initialcoeff1), convert2mesh(func2fit, chipnum=2, coeff=initialcoeff2), lim = 5))
-plt.show(plotall(tab,convert2mesh(func2fit, chipnum=1, coeff=finalcoeff1), convert2mesh(func2fit, chipnum=2, coeff=finalcoeff2), lim = 5))
+plt.show(plotall(tab,convert2mesh(func2fit, chipnum=1, coeff=initialcoeff1), \
+                convert2mesh(func2fit, chipnum=2, coeff=initialcoeff2), lim = 5))
+plt.show(plotall(tab,convert2mesh(func2fit, chipnum=1, coeff=finalcoeff1),   \
+                convert2mesh(func2fit, chipnum=2, coeff=finalcoeff2), lim = 5))
 
 def plotimg(img, title = ''):
     fig = plt.figure()
@@ -445,10 +464,12 @@ def plot2imgs(img1, img2, title =''):
     ax1 = fig.add_subplot(211)
     #ax1.set_xlabel('X Pixel', fontsize = 18);  ax1.set_ylabel('Y Pixel', fontsize = 18)
     extent1 = (0, CHIP1XLEN, CHIP2YLEN, CHIP1YLEN + CHIP2YLEN)
-    cax1 = ax1.imshow(np.double(img1), cmap = 'gray_r', interpolation='nearest', origin='lower', extent=extent1)
+    cax1 = ax1.imshow(np.double(img1), cmap = 'gray_r', interpolation='nearest', \
+                        origin='lower', extent=extent1)
     ax2 = fig.add_subplot(212)
     extent2 = (0, CHIP2XLEN, 0, CHIP2YLEN)
-    cax2 = ax2.imshow(np.double(img2), cmap = 'gray_r', interpolation='nearest', origin='lower', extent=extent2)
+    cax2 = ax2.imshow(np.double(img2), cmap = 'gray_r', interpolation='nearest', \
+                        origin='lower', extent=extent2)
     #fig.colorbar(cax1, fraction=0.046, pad=0.04)
     return fig
 
