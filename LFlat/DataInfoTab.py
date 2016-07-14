@@ -216,7 +216,7 @@ def bin_filter(tab, xpixelarr, ypixelarr, xbin, ybin, low = 3, high = 3):
     # Take out all the information from the table
     xall = tab['x']
     yall = [row['y'] if row['chip'] == 2 else row['y'] + CHIP2YLEN for row in tab]
-    delmall = tab['mag'] - tab['avgmag']
+    delmall = (tab['mag'] - tab['avgmag']) / tab['avgmag'] # normalized
     xall = np.asarray(xall)
     yall = np.asarray(yall)
     delmall = np.asarray(delmall)
