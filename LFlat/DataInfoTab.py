@@ -69,8 +69,8 @@ def sigmaclip(z, low = 3, high = 3, num = 5):
     
     # copied exactly from scipy.stats.sigmaclip with some variation to keep 
     # account for the index(es) that is(are) being removed
-    c = np.asarray(z).ravel() # this will be changing
-    c1 = np.copy(c) # the very original array
+    c = np.asarray(z).ravel()   # this will be changing
+    c1 = np.copy(c)             # the very original array
     delta = 1
     removevalues = np.array([])
     count = 0
@@ -93,7 +93,7 @@ def sigmaclip(z, low = 3, high = 3, num = 5):
     remove_arr = map(int, remove_arr)
     return remove_arr
 
-def sigmaclip_starmag(tab, starIDarr, low = 3, high = 3):
+def sigmaclip_starmagflux(tab, starIDarr, flux = True, mag = False, low = 3, high = 3):
     """
     Purpose
     -------
@@ -105,6 +105,8 @@ def sigmaclip_starmag(tab, starIDarr, low = 3, high = 3):
     ---------
     tab:                The Astropy table with all the information
     starIDarr:          The array of unique star IDs in the table
+    flux:               Boolean: True if we want to sigmaclip flux (Default is True)
+    mag:                Boolean: True if we want to sigmaclip mag  (Default is False)
     low:                The bottom cutoff (low sigma); default is 3
     high:               The top cutoff (high sigma); default is 3
         
@@ -118,10 +120,16 @@ def sigmaclip_starmag(tab, starIDarr, low = 3, high = 3):
     removetabindices = np.array([])
     for star in starIDarr:
         starindexes = np.where(tab['id'] == star)[0]
-        currmags = tab[starindexes]['mag']
-        remove_arr = sigmaclip(np.abs(currmags), low, high)
-        removetabindicies = np.append(removetabindices, starindexes[remove_arr])
+        if mag:
+            currmags = tab[starindexes]['mag']
+            remove_arr = sigmaclip(np.abs(currmags), low, high)
+            removetabindicies = np.append(removetabindices, starindexes[remove_arr])
+        if flux:
+            currfluxes = tab[starindexes]['flux']
+            remove_arr = sigmaclip(np.abs(currfluxes), low, high)
+            removetabindicies = np.append(removetabindices, starindexes[remove_arr])
     removetabindicies = map(int, removetabindicies)
+    
     tab.remove_rows(removetabindicies)
     return tab, starIDarr
 
@@ -136,6 +144,8 @@ def sigmaclip_delmagdelflux(tab, starIDarr, flux = True, mag = False, low = 3, h
     ---------
     tab:                The Astropy table with all the information
     starIDarr:          The array of unique star IDs in the table [not used] 
+    flux:               Boolean: True if we want to sigmaclip flux (Default is True)
+    mag:                Boolean: True if we want to sigmaclip mag  (Default is False)
     low:                The bottom cutoff (low sigma); default is 3
     high:               The top cutoff (high sigma); default is 3
         
@@ -146,13 +156,13 @@ def sigmaclip_delmagdelflux(tab, starIDarr, flux = True, mag = False, low = 3, h
                         but returned for consistency
     '''
     if flux:
-        delfarr = tab['flux'] - tab['avgflux']
+        delfarr = (tab['flux'] - tab['avgflux']) / tab['avgflux']   # normalized flux
         delfarr = np.asarray(delfarr)
         # sigma clipping the delta fluxes
         remove_arr = sigmaclip(delfarr, low, high)
         tab.remove_rows(remove_arr)
     if mag:
-        delmarr = tab['mag'] - tab['avgmag']
+        delmarr = (tab['mag'] - tab['avgmag']) / tab['avgmag']      # normalized mag
         delmarr = np.asarray(delmarr)
         # sigma clipping the delta magnitudes
         remove_arr = sigmaclip(delmarr, low, high)
@@ -305,15 +315,14 @@ def make_avgmagandflux(tab, starIDarr):
     2) The error for avgmag is the the quadratic error ex. (e1^2 + e2^2 + .. + eN^2)^(1/2) / N
     3) The fluxes are just converted from the magnitudes
     """
-    # Create two new columns
+    # Create new columns
     filler = np.arange(len(tab))
-    
-    c1 = Column(data = filler, name = 'avgmag', dtype = np.float64)
-    c2 = Column(data = filler, name = 'avgmagerr', dtype = np.float64)
-    c3 = Column(data = filler, name = 'flux', dtype = np.float64)
-    c4 = Column(data = filler, name = 'fluxerr', dtype = np.float64)
-    c5 = Column(data = filler, name = 'avgflux', dtype = np.float64)
-    c6 = Column(data = filler, name = 'avgfluxerr', dtype = np.float64)
+    c1 = Column(data = filler, name = 'avgmag',        dtype = np.float64)
+    c2 = Column(data = filler, name = 'avgmagerr',     dtype = np.float64)
+    c3 = Column(data = filler, name = 'flux',          dtype = np.float64)
+    c4 = Column(data = filler, name = 'fluxerr',       dtype = np.float64)
+    c5 = Column(data = filler, name = 'avgflux',       dtype = np.float64)
+    c6 = Column(data = filler, name = 'avgfluxerr',    dtype = np.float64)
     tab.add_column(c1)
     tab.add_column(c2)
     tab.add_column(c3)
@@ -334,7 +343,6 @@ def make_avgmagandflux(tab, starIDarr):
         avgerror = lambda errarr: np.sqrt(np.sum(errarr**2)) / len(errarr)
         avgmagerr = avgerror(currmagerr)
         avgfluxerr = avgerror(currfluxerr)
-        
         for i, index in enumerate(starindexes):         # input the abs mag and abs magerr
             tab[index]['avgmag'] = avgmag
             tab[index]['avgmagerr'] = avgmagerr  
@@ -344,6 +352,7 @@ def make_avgmagandflux(tab, starIDarr):
             tab[index]['avgfluxerr'] = avgfluxerr
     
     return tab, starIDarr
+    
 '''
 tab, starIDarr = make_avgmagandflux(tab, starIDarr)
 tab =  tab[np.where(tab['flux']/tab['fluxerr'] > 5)[0]] # S/N ratio for flux is greater than 5
@@ -357,6 +366,7 @@ print len(starIDarr)
 #tab, zz, zzdelm, zztabindex = bin_filter(tab, xpixelarr, ypixelarr, xbin, ybin, low=3, high=3)
 print "%s seconds for filtering the data" % (time.time() - start_time) # For everything to run ~ 111 seconds
 '''
+
 #####################################################
 #####################################################
 #####################################################
@@ -372,6 +382,7 @@ def extract_data_dicts(starIDarr, datatab):
     Purpose
     -------
     Extract all the data (star ID, x and y pixels, magnitude, and magnitude errors)
+    into dictionaries
     
     Parameters
     ----------
