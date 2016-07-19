@@ -3,9 +3,9 @@ import time
 import scipy.optimize as op
 
 # Creating constants to keep a "standard"
-CHIPXLEN =  CHIPYLEN = 2048
+CHIPXLEN =  CHIPYLEN = 1024
 
-BIN_NUM = 3
+BIN_NUM = 2
 XBIN = YBIN = 10 * BIN_NUM
 XPIX = np.linspace(0,     CHIPXLEN,     XBIN)
 YPIX = np.linspace(0,     CHIPYLEN,     YBIN)
@@ -101,24 +101,30 @@ data = np.genfromtxt(path + datafil)
 # Create an Astropy table
 # tab[starID][0]: starID; ...[2]: chip#; ...[3]: x pixel; ...[4]: y pixel; 
 # ...[5]: magnitude; ...[6]: magnitude error; rest: dummy
-names = ['id', 'filenum', 'chip', 'x', 'y', 'mag', 'magerr', 'd1', 'd2', 'd3']
-types = [int, int, int, np.float64, np.float64, np.float64, np.float64,
-         float, float, float]
-tab = Table(data, names=names, dtype=types)
-tab.remove_columns(['filenum','d1','d2','d3'])   # remove the dummy columns  
+############
+#names = ['id', 'filenum', 'chip', 'x', 'y', 'mag', 'magerr', 'd1', 'd2', 'd3']
+#types = [int, int, int, np.float64, np.float64, np.float64, np.float64,
+#         float, float, float]
+#tab = Table(data, names=names, dtype=types)
+#tab.remove_columns(['filenum','d1','d2','d3'])   # remove the dummy columns  
+############
 
 ############ Read in NEW data :: comment/uncomment this snippet
-datafil = 'f606w_phot_r5.txt'
+datafil = 'flatfielddata.txt'
 data = np.genfromtxt(path + datafil)
-names = ['id', 'image', 'chip', 'x', 'y', 'mag', 'magerr']
+names = ['id', 'filenum', 'chip', 'x', 'y', 'mag', 'magerr']
 types = [int, int, int, np.float64, np.float64, np.float64, np.float64]
 tab = Table(data, names=names, dtype=types)
-tab.remove_columns(['image'])
-tab = tab[np.where(tab['chip'] == 1)[0]]
-tab = tab[np.where(tab['x'] <= CHIPXLEN)[0]]
+tab.remove_columns(['filenum'])
+tab = tab[np.where(tab['magerr'] < 1.)[0]]
+#tab = tab[np.where(tab['chip'] == 2)[0]]
+tab = tab[np.where(tab['x'] <= 950)[0]]
+tab = tab[np.where(tab['x'] >= 100)[0]]
+tab = tab[np.where(tab['y'] <= 950)[0]]
+tab = tab[np.where(tab['x'] >= 100)[0]]
 ############
-chosen = np.random.choice(len(tab), 4000, replace = False)
-tab = tab[chosen]
+#chosen = np.random.choice(len(tab), 4000, replace = False)
+#tab = tab[chosen]
 tab.sort(['id'])                                 # sort the table by starID
 starIDarr = np.unique(tab['id'])                 # collect all the star IDs
 
@@ -165,10 +171,11 @@ lenstar0 = len(starIDarr)
 ###########################################
 ###########################################
 
-n = 3
+n = 4
 func2read, func2fit = norder2dpoly(n)             # nth order 2d Polynomial
 
-nx = ny = 3
+nx = ny = 6
+#n = nx
 #func2read, func2fit = norder2dcheb(nx, ny)        # nx th and ny th order 2d Chebyshev Polynomial
 print 'Function that is being fit:', func2read
 
@@ -220,13 +227,13 @@ def getfit(tab, func2fit):
     B = z
     coeff, rsum, rank, s = np.linalg.lstsq(A, B)
 
-    zfit = np.sum([co*fn for co,fn in zip(coeff, f)])
     # Ex: zfit = coeff[0]*x**2 + coeff[1]*y**2 + ... === coeff[0]*f[0] + ...
-    
-    def get_res(z, zfit):
-        # returns an array of the error in the fit
-        return np.abs(zfit - z)
-    resarr = get_res(z, zfit)
+    zfit = np.zeros(len(x))
+    k = 0
+    while k < len(coeff):
+        zfit += coeff[k]*f[k]
+        k+=1
+    resarr = zfit - z
     return [x, y, z, zfit, coeff, rsum, resarr]
     
 x, y, z, zfit, coeff, rsum, resarr = getfit(tab, func2fit)
@@ -308,7 +315,7 @@ def chisqall(params, tab, num_cpu = 4):
     # chisqstar(tab[np.where(tab['id'] == star)[0]])-- the chi squared for just one star
     #totalsum = np.sum([chisqstar(tab[np.where(tab['id'] == star)[0]]) for star in starIDarr])
     totalresid = np.asarray([chisqstar(tab[np.where(tab['id'] == star)[0]], params) for star in starIDarr])
-    totalresid = reduce(lambda x, y: x + y, totalresid) # flatten totalresid
+    totalresid = reduce(lambda x, y: x + y, totalresid) # flatten totalresid        
     return totalresid
     ########## 
 
@@ -319,103 +326,24 @@ tabreduced = np.copy(tab)
 tabreduced = Table(tabreduced)
 tabreduced.remove_columns(['mag', 'magerr', 'avgmag', 'avgmagerr', 'avgflux', 'avgfluxerr'])
 
-#maxfev = 400
-#count = 0
-#print 'Starting Least Square Fit'
-#result = op.leastsq(chisqall, initialcoeff, args = (tabreduced), maxfev = maxfev)
-#end_time = time.time()
-#print "%s seconds for fitting the data going through each star" % (end_time - start_time)
-#print lentab0/(end_time - start_time), ' = how many observation are being processed per second' 
-#print 'maxfev is ', maxfev
-#
-#
-#try:
-#    finalcoeff = result[0]
-#except KeyError:
-    #finalcoeff = result.x
-finalcoeff = initialcoeff
+maxfev = 100
+count = 0
+print 'Starting Least Square Fit'
+result = op.leastsq(chisqall, initialcoeff, args = (tabreduced), maxfev = maxfev)
+end_time = time.time()
+print "%s seconds for fitting the data going through each star" % (end_time - start_time)
+print lentab0/(end_time - start_time), ' = how many observation are being processed per second' 
+
+
+try:
+    finalcoeff = result[0]
+except KeyError:
+    finalcoeff = result.x
+#finalcoeff = initialcoeff
 print 'Final Coefficients:'
 print finalcoeff
+print 'Count: ', count
 
-###########################################
-############### Plotting ##################
-###########################################
-
-from mpl_toolkits.mplot3d import Axes3D
-import matplotlib.pyplot as plt
-
-def convert2mesh(func2fit, coeff, xpixel = XPIX, ypixel = YPIX):
-    ''' Creates a mesh using the coefficients and x and y pixel values '''
-    xx, yy = np.meshgrid(xpixel, ypixel, sparse = True, copy = False) 
-    fmesh = func2fit(xx, yy)
-    coeff = np.asarray(coeff)
-    zzfit = [[0 for i in xpixel] for j in ypixel]
-    k = 0
-    while k < len(coeff):
-        zzfit += coeff[k]*fmesh[k]
-        k+=1
-    return [xx, yy, zzfit]
-       
-def plotmesh(a, title = ''):
-    ''' Returns the figure of the mesh fit plot '''
-    X, Y, Z = a                   # a is the xx yy and zz (2d array)
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection='3d')
-    ax.plot_wireframe(X, Y, Z, rstride=1, cstride=1, color='red')
-    ax.set_title(title)
-    plt.legend()
-    return fig
-    
-plt.show(plotmesh(convert2mesh(func2fit, coeff=initialcoeff), title = 'Initial'))
-plt.show(plotmesh(convert2mesh(func2fit, coeff=finalcoeff), title = 'Final'))
-
-def plotdelflux(tab):
-    x = tab['x']
-    y = tab['y']
-    delflux = (tab['flux'] - tab['avgflux']) / tab['avgflux'] # normalized
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection='3d')
-    ax.scatter(x, y, delflux, alpha = .1)
-    return fig
-    
-plt.show(plotdelflux(tab))
-
-def plotall(tab, a, lim, title = ''):
-    X, Y, Z = a                    # a is the xx yy and zz (2d array)
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection='3d')
-    ax.plot_wireframe(X, Y, Z, rstride=1, cstride=1, color='red')
-    
-    x = tab['x']
-    y = tab['y']
-    delflux = (tab['flux'] - tab['avgflux']) / tab['avgflux'] # normalized
-    ax.scatter(x, y, delflux, s = 3)
-    ax.set_zlim([-lim, lim])
-    ax.set_title(title)
-    plt.legend()
-    return fig   
-plt.show(plotall(tab, convert2mesh(func2fit, coeff=initialcoeff), lim = .05, title = 'Initial'))
-plt.show(plotall(tab, convert2mesh(func2fit, coeff=finalcoeff), lim = .05, title = 'Final'))
-
-    
-def plotimg(img, title = ''):
-    fig = plt.figure()
-    ax = fig.add_subplot(111)
-    ax.set_title(title)
-    ax.set_xlabel('X Pixel', fontsize = 18);  ax.set_ylabel('Y Pixel', fontsize = 18)
-    extent=(0, CHIPXLEN, 0, CHIPYLEN)    
-    cax = ax.imshow(np.double(img), cmap = 'gray_r', interpolation='nearest', \
-                                    origin='lower', extent=extent)
-    fig.colorbar(cax, fraction=0.046, pad=0.04)
-    return fig
-    
-zzfitinit = convert2mesh(func2fit, coeff=initialcoeff)[2]     # convert2mesh returns [xx, yy, zzfit]
-imginitial = plotimg(zzfitinit, title = 'Initial')
-plt.show(imginitial)
-
-zzfitfinal = convert2mesh(func2fit, coeff=finalcoeff)[2]      # convert2mesh returns [xx, yy, zzfit]
-imgfinal = plotimg(zzfitfinal, title = 'Final')
-plt.show(imgfinal)
 
 ###########################################
 ###########################################
@@ -503,6 +431,98 @@ def do_bin(tab, xbin = XBIN, ybin = YBIN):
     return [zzorig, zznum, zzavg]
     
 zzorig, zznum, zzavg = do_bin(tab)
+###########################################
+############### Plotting ##################
+###########################################
 
-plt.show(plotimg(zznum, title = 'Number of Observations in a Bin'))
-plt.show(plotimg(zzavg, title = 'Normalized Delta Flux Binned'))
+from mpl_toolkits.mplot3d import Axes3D
+import matplotlib.pyplot as plt
+
+
+def convert2mesh(func2fit, coeff, xpixel = XPIX, ypixel = YPIX):
+    ''' Creates a mesh using the coefficients and x and y pixel values '''
+    xx, yy = np.meshgrid(xpixel, ypixel, sparse = True, copy = False) 
+    fmesh = func2fit(xx, yy)
+    coeff = np.asarray(coeff)
+    zzfit = [[0 for i in xpixel] for j in ypixel]
+    k = 0
+    while k < len(coeff):
+        zzfit += coeff[k]*fmesh[k]
+        k+=1
+    #zzfit = zzfit.T # Currently zzfit[0] are the values of varying x and keeping y = 0 (constant
+                    # Transposing it makes zzfit[0] the values of x = 0 and varying y
+    return [xx, yy, zzfit]
+       
+def plotmesh(a, title = ''):
+    ''' Returns the figure of the mesh fit plot '''
+    X, Y, Z = a                   # a is the xx yy and zz (2d array)
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+    ax.plot_wireframe(X, Y, Z, rstride=1, cstride=1, color='red')
+    ax.set_title(title)
+    plt.legend()
+    return fig
+    
+plt.show(plotmesh(convert2mesh(func2fit, coeff=initialcoeff), title = 'Initial'))
+plt.show(plotmesh(convert2mesh(func2fit, coeff=finalcoeff), title = 'Final'))
+
+def plotdelflux(tab):
+    x = tab['x']
+    y = tab['y']
+    delflux = (tab['flux'] - tab['avgflux']) / tab['avgflux'] # normalized
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+    ax.scatter(x, y, delflux, alpha = .1)
+    return fig
+    
+plt.show(plotdelflux(tab))
+
+def plotall(tab, a, lim, title = ''):
+    X, Y, Z = a                    # a is the xx yy and zz (2d array)
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+    ax.plot_wireframe(X, Y, Z, rstride=1, cstride=1, color='red')
+    
+    x = tab['x']
+    y = tab['y']
+    delflux = (tab['flux'] - tab['avgflux']) / tab['avgflux'] # normalized
+    ax.scatter(x, y, delflux, s = 3)
+    ax.set_zlim([-lim, lim])
+    ax.set_title(title)
+    plt.legend()
+    return fig   
+plt.show(plotall(tab, convert2mesh(func2fit, coeff=initialcoeff), lim = .05, title = 'Initial: poly2d n = ' + str(n)))
+plt.show(plotall(tab, convert2mesh(func2fit, coeff=finalcoeff), lim = .05, title = 'Final: poly2d n = ' + str(n)))
+   
+def plotimg(img, vmin, vmax, title = ''):
+#def plotimg(img, title = '', *kargs):
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+    ax.set_title(title)
+    ax.set_xlabel('X Pixel', fontsize = 18);  ax.set_ylabel('Y Pixel', fontsize = 18)
+    extent = (0, CHIPXLEN, 0, CHIPYLEN)    
+    cax = ax.imshow(np.double(img), cmap = 'viridis', interpolation='nearest', \
+                                    origin='lower', extent=extent, vmin=vmin, vmax=vmax)
+    fig.colorbar(cax, fraction=0.046, pad=0.04)
+    return fig
+    
+#plt.show(plotimg(zznum, vmin = np.min(zznum), vmax = np.max(zznum), title = 'Number of Observations in a Bin'))
+#plt.show(plotimg(zzavg, vmin = np.min(zzavg), vmax = np.max(zzavg), title = 'Normalized Delta Flux Binned'))
+
+zzfitinit = convert2mesh(func2fit, coeff=initialcoeff)[2]     # convert2mesh returns [xx, yy, zzfit]
+imginitial = plotimg(zzfitinit, vmin = np.min(zzavg), vmax = np.max(zzavg), title = 'Initial: poly2d n = ' + str(n))
+plt.show(imginitial)
+
+zzfitfinal = convert2mesh(func2fit, coeff=finalcoeff)[2]      # convert2mesh returns [xx, yy, zzfit]
+imgfinal = plotimg(zzfitfinal, vmin = np.min(zzavg), vmax = np.max(zzavg), title = 'Final: poly2d n = ' + str(n))
+plt.show(imgfinal)
+
+import scipy.signal as signal
+kern = np.ones((2,2))
+zzsmooth = signal.convolve(zzavg, kern)
+zzsmooth = zzsmooth*np.max(zzavg)/ np.max(zzsmooth)
+#plt.show(plotimg(zzsmooth, vmin = np.min(zzsmooth), vmax = np.max(zzsmooth), title = 'Smooth'))
+
+###########################################
+###########################################
+###########################################
