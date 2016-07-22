@@ -132,7 +132,8 @@ data = np.genfromtxt(path + datafil)
 ############
 
 ############ Read in NEW data :: comment/uncomment this snippet
-datafil = 'flatfielddata_fudged.txt'
+datafil = 'flatfielddata.txt'
+#datafil = 'flatfielddata_fudged.txt'
 #datafil = 'fakeflatdata.txt'
 data = np.genfromtxt(path + datafil)
 names = ['id', 'filenum', 'chip', 'x', 'y', 'mag', 'magerr']
@@ -193,13 +194,13 @@ lenstar0 = len(starIDarr)
 ###########################################
 ###########################################
 
-n = 1
+n = 4
 func2read, func2fit = norder2dpoly(n)             # nth order 2d Polynomial
 
 nx = ny = n
 func2read, func2fit = norder2dcheb(nx, ny)        # nx th and ny th order 2d Chebyshev Polynomial
 
-func2read, func2fit = norder2dlegendre(nx, ny)   # nx th and ny th order 2d Legendre Polynomial
+#func2read, func2fit = norder2dlegendre(nx, ny)   # nx th and ny th order 2d Legendre Polynomial
 SCALE2ONE = True
 print 'Function that is being fit:', func2read
 funcname = 'cheb' + '2d'
@@ -288,8 +289,6 @@ def chisqstar(starrows, p):
         ''' Worker function '''
         # Input is the rows of the table corresponding to a single star so that we don't need to input a whole table
         #starrows, p = inputs
-        #starfluxes = starrows['flux']
-        #starfluxerrs = starrows['fluxerr']
         starvals = starrows[SPACE_VAL]
         starvalerrs = starrows[SPACE_VAL + 'err']
         func = lambda p, x, y: np.sum(func2fit(x,y) * np.asarray(p))     # The 'delta' function
@@ -365,7 +364,6 @@ start_time = time.time()
 tabreduced = np.copy(tab)               
 tabreduced = Table(tabreduced)
 tabreduced.remove_columns(['avgmag', 'avgmagerr', 'avgflux','avgfluxerr'])
-#tabreduced.remove_columns(['mag', 'magerr', 'avgmag', 'avgmagerr', 'avgflux','avgfluxerr'])
 
 maxfev = 1400
 count = 0
@@ -378,37 +376,11 @@ try:
     finalcoeff = result[0]
 except KeyError:
     finalcoeff = result.x
+    
 #finalcoeff = initialcoeff
 print 'Final Coefficients:'
 print finalcoeff
 print 'Count: ', count
-
-
-def something(chisqfn, initialcoeff, finalcoeff, num=20):
-    # need tabreduced
-    diffarr = np.array([])
-    for init, fin in zip(initialcoeff, finalcoeff):
-        diffarr = np.append(diffarr, (init-fin)/np.double(num))
-    
-    chisqarr = np.array([])
-    coeffarr = []
-    for i in range(num*2 + 1):
-        tempcoeff = initialcoeff - diffarr * i
-        tempchisq = np.sum(np.asarray(chisqfn(tempcoeff, tabreduced))**2)
-        print tempcoeff
-        chisqarr = np.append(chisqarr, tempchisq)
-        coeffarr.append(tempcoeff)
-    return [range(len(chisqarr)), chisqarr, coeffarr]
-#somex, somey, coeffarr = something(chisqall, initialcoeff, finalcoeff)
-
-def plotthis():
-    fig = plt.figure()
-    plt.plot(range(len(randomchisq)), randomchisq, 'o')
-    plt.xlabel('Count')
-    plt.ylabel(r'\chi^2')
-    plt.show(fig)
-#plt.plot(somex,somey, 'o')
-#plt.show()
 
 ###########################################
 ###########################################
@@ -565,7 +537,7 @@ def plotmesh(a, title = ''):
     ax.set_title(title)
     plt.legend()
     return fig
-    
+
 #plt.show(plotmesh(convert2mesh(func2fit, coeff=initialcoeff), title = 'Initial: ' + str(funcname) + ' n = ' + str(n)))
 plt.show(plotmesh(convert2mesh(func2fit, coeff=finalcoeff), title = 'Final: ' + str(funcname) + ' n = ' + str(n)))
 
@@ -631,10 +603,33 @@ plt.show(plotimg(zzavg, title = 'Normalized Delta ' + SPACE_VAL + ' Binned'))
 #imginitial = plotimg(zzfitinit, title = 'Initial: ' + str(funcname) + ' n = ' + str(n), fitplot = True)
 #plt.show(imginitial)
 
-
 zzfitfinal = convert2mesh(func2fit, coeff=finalcoeff, xpixel = np.double(range(int(CHIPXLEN))), ypixel = np.double(range(int(CHIPYLEN))))[2]      # convert2mesh returns [xx, yy, zzfit]
 imgfinal = plotimg(zzfitfinal, title = 'Final: ' + str(funcname) + ' n = ' + str(n), fitplot = True)
 plt.show(imgfinal)
+
+def something(chisqfn, initialcoeff, finalcoeff, num=20):
+    # need tabreduced
+    diffarr = np.array([])
+    for init, fin in zip(initialcoeff, finalcoeff):
+        diffarr = np.append(diffarr, (init-fin)/np.double(num))
+    
+    chisqarr = np.array([])
+    coeffarr = []
+    for i in range(num*2 + 1):
+        tempcoeff = initialcoeff - diffarr * i
+        tempchisq = np.sum(np.asarray(chisqfn(tempcoeff, tabreduced))**2)
+        chisqarr = np.append(chisqarr, tempchisq)
+        coeffarr.append(tempcoeff)
+    return [range(len(chisqarr)), chisqarr, coeffarr]
+    
+############### If we want to make sure the final coefficients are the minimum
+############### by making a chi squared path from the initial coeff to the final coeff
+############### and then going past the final coeff
+#somex, somey, coeffarr = something(chisqall, initialcoeff, finalcoeff)
+#fig = plt.figure()
+#plt.plot(somex,somey,'o')
+#plt.show()
+###############
 
 finalfunc = lambda p, x, y: np.sum(func2fit(x,y) * np.asarray(p))     # The final flat
 
@@ -646,43 +641,55 @@ def simple3dmesh(coeff):
     ax.plot_wireframe(xx,yy,zz, rstride=1, cstride=1, color='red')
     plt.show(fig)
     
-def simple3dplot(something):
+def simple3dplot(rows, something, title = ''):
     fig = plt.figure()
     ax = fig.add_subplot(111, projection='3d')
-    starrows = tab[np.where(tab['id']==1)[0]]
-    ax.scatter(starrows['x'],starrows['y'], something)
+    ax.scatter(rows['x'],rows['y'], something)
+    ax.set_title(title)
     #ax.scatter(tab['x'], tab['y'], something, color='red')
     plt.show(fig)
 
-def convert2norm(coeff, somethingchar):
+def apply_flat(rows, coeff, somethingchar):
     final = np.array([])
-    starrows = tab[np.where(tab['id']==1)[0]]
-    for x,y,something in zip(starrows['x'],starrows['y'],starrows[somethingchar]):
+    for x,y,something in zip(rows['x'], rows['y'], rows[somethingchar]):
         if SCALE2ONE:
             x = (x - CHIPXLEN/2)/(CHIPXLEN/2)
             y = (y - CHIPYLEN/2)/(CHIPYLEN/2)
-        print '***'
-        print x,y,something
-        print finalfunc(coeff,x,y)
-        print something / finalfunc(coeff,x,y)
+        #print '***'
+        #print x,y,something
+        #print finalfunc(coeff,x,y)
+        #print something / finalfunc(coeff,x,y)
         final = np.append(final, something / finalfunc(coeff,x,y))
     return final
-
-
-final = convert2norm(finalcoeff, SPACE_VAL)
-simple3dplot((tab[SPACE_VAL] - tab['avg'+SPACE_VAL])/ tab['avg'+SPACE_VAL])
-simple3dplot(tab[SPACE_VAL])
-simple3dplot(final)
-
-#for star in np.unique(tab['id']):
-#    starrows = tab[np.where(tab['id']==star)[0]]
-#    print np.mean(starrows[SPACE_VAL])
-#    print np.std(starrows[SPACE_VAL])
     
-print np.mean(tab[SPACE_VAL])
-print np.mean(final)
-print np.std(tab[SPACE_VAL])
-print np.std(final)
+final = apply_flat(tab, finalcoeff, SPACE_VAL)
+
+############### If we want to plot the before/after of applying the flat (as is as well as the normalized delta)
+simple3dplot(tab, tab[SPACE_VAL], title = 'Before LFlat, just ' + SPACE_VAL + ' values plotted')
+simple3dplot(tab, final, title = 'After LFlat, just ' + SPACE_VAL + ' values plotted')
+simple3dplot(tab, (tab[SPACE_VAL] - tab['avg'+SPACE_VAL])/ tab['avg'+SPACE_VAL], title = 'Before LFlat, normalized delta ' + SPACE_VAL)
+simple3dplot(tab, (final - tab['avg'+SPACE_VAL])/tab['avg'+SPACE_VAL], title = 'After LFlat, normalized delta ' + SPACE_VAL)
+###############
+
+############### If we want to see/plot the mean of each star before and after applying the flat
+for star in np.unique(tab['id']):
+    starrows = tab[np.where(tab['id']==star)[0]]
+    finalstar = apply_flat(starrows, finalcoeff, SPACE_VAL)
+    mean_before = np.mean(starrows[SPACE_VAL])
+    std_before = np.std(starrows[SPACE_VAL])
+    mean_after = np.mean(finalstar)
+    std_after = np.std(finalstar)
+    print '***' + str(star)
+    print mean_before , np.max(starrows[SPACE_VAL]) - np.min(starrows[SPACE_VAL])
+    print std_before
+    print (np.max(starrows[SPACE_VAL]) - np.min(starrows[SPACE_VAL])) / mean_before
+    print mean_after, np.max(finalstar) - np.min(finalstar)
+    print std_after
+    print (np.max(finalstar) - np.min(finalstar)) / mean_after
+    #simple3dplot(starrows, starrows[SPACE_VAL], title = 'Original ' + str(star) + ' ' + str(mean_before) + ', ' + str(std_before))
+    #simple3dplot(starrows, finalstar, title = 'Final ' + str(star) + ' ' + str(mean_after) + ', ' + str(std_after))
+############### 
+
 ###########################################
 ################ Misc. ####################
 ###########################################
