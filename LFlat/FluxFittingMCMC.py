@@ -2,6 +2,9 @@ import numpy as np
 import emcee
 import matplotlib.pyplot as plt
 import scipy.optimize as op
+import warnings
+import time
+
 
 # Creating constants to keep a "standard"
 CHIPXLEN =  CHIPYLEN = 1024.
@@ -15,6 +18,9 @@ SCALE2ONE = True
 SPACE_VAL = 'flux'                               # What space we are working in ('flux' or 'mag')
 use_f = False
 f = 0.05
+n = 5
+nx = ny = n
+funcname = 'cheb' + '2d'
 
 ###########################################
 ######### Functions to Optimize ###########
@@ -25,6 +31,11 @@ Note for all functions:
      polynomial, the constant term needs to be 1 + 0*x but lambdify
      makes it just 1, which becomes a problem when trying to fit the 
      function and hence why the 0th element turns into np.ones(len(x))
+Returns for all functions:
+    funclist -- A list of the different components of the poly 
+                (elements are Symbol types) useful for printing
+    f        -- A function made from funclist and takes in two
+                parameters, x and y
 '''
 from sympy import * 
 def norder2dcheb(nx, ny):
@@ -34,13 +45,6 @@ def norder2dcheb(nx, ny):
         -------
         Create the 2D nx th and ny th order Chebyshev polynomial using
         numpy.polynomial.chebyshev.chebvander2d(x, y, [nx, ny])
-        
-        Returns
-        -------
-            funclist -- A list of the different components of the poly 
-                            (elements are Symbol types) useful for printing
-            f        -- A function made from funclist and takes in two
-                            parameters, x and y
     '''
     x = Symbol('x')
     y = Symbol('y')
@@ -74,7 +78,7 @@ data = np.genfromtxt(path + datafil)
 
 ############ Read in NEW data :: comment/uncomment this snippet
 datafil = 'flatfielddata.txt'
-datafil = 'flatfielddata_fudged.txt'
+#datafil = 'flatfielddata_fudged.txt'
 #datafil = 'fakeflatdata.txt'
 data = np.genfromtxt(path + datafil)
 names = ['id', 'filenum', 'chip', 'x', 'y', 'mag', 'magerr']
@@ -121,12 +125,9 @@ lenstar0 = len(starIDarr)
 ###########################################
 ###########################################
 
-n = 1
-nx = ny = n
 func2read, func2fit = norder2dcheb(nx, ny)        # nx th and ny th order 2d Chebyshev Polynomial
 print 'Function that is being fit:', func2read
-funcname = 'cheb' + '2d'
-  
+
 ##########
 def funcintegrate(x, y, coeff):
     return np.sum(func2fit(x, y) * coeff)
@@ -145,7 +146,7 @@ def bounds_x():
 def area():
     return np.sum(np.abs(bounds_y() + bounds_x()))
 ##########
-
+from multiprocessing import Pool
 
 def lnprior(params):
     realparams = params
@@ -164,37 +165,52 @@ def lnprior(params):
     
     diff_maxmin = np.max(four_corners_vals) - np.min(four_corners_vals)
 
-    if -.15 < realparams[0] < .15 and diff_maxmin <= .30: #and -10.0 < lnf < 1.0:
+    if -.12 < realparams[0] < .12 and diff_maxmin <= .30: #and -10.0 < lnf < 1.0:
         return 0.0
     return -np.inf
-       
-def lnlike(params, tab):
-    def chisqstar(starrows, p):
-        starvals = starrows[SPACE_VAL]
-        starvalerrs = starrows[SPACE_VAL + 'err']
-        func = lambda p, x, y: np.sum(func2fit(x,y) * np.asarray(p)) + 1    # The 'delta' function
-        if SCALE2ONE:
-            fits = [func(p, (row['x']-CHIPXLEN/2)/(CHIPXLEN/2), (row['y']-CHIPYLEN/2)/(CHIPYLEN/2)) for row in starrows]
+ 
+#def chisqstar(inputs):
+#    starrows, p = inputs
+def chisqstar(starrows, p):
+    starvals = starrows[SPACE_VAL]
+    starvalerrs = starrows[SPACE_VAL + 'err']
+    func = lambda p, x, y: np.sum(func2fit(x,y) * np.asarray(p)) + 1    # The 'delta' function
+    if SCALE2ONE:
+        fits = [func(p, (row['x']-CHIPXLEN/2)/(CHIPXLEN/2), (row['y']-CHIPYLEN/2)/(CHIPYLEN/2)) for row in starrows]
+    else:
+        fits = [func(p, row['x'], row['y']) for row in starrows]
+    avgf = np.mean(starvals/fits)                                  # Our 'expected' value for the Flux
+    
+    def get_sigmasq():
+        if use_f:
+            return np.asarray((starvalerrs/fits))**2 + np.exp(2*lnf)*avgf**2
         else:
-            fits = [func(p, row['x'], row['y']) for row in starrows]
-        avgf = np.mean(starvals/fits)                                  # Our 'expected' value for the Flux
-        
-        def get_sigmasq():
-            if use_f:
-                return np.asarray((starvalerrs/fits))**2 + np.exp(2*lnf)*avgf**2
-            else:
-                return np.asarray((starvalerrs/fits))**2
-                
-        starsq = (starvals/fits - avgf)**2 / get_sigmasq() + np.log(get_sigmasq()) # ignore the 2pi since that is just a constant for the chisq
-        starsq = np.asarray(starsq)
-        starsqsum = np.sum(starsq)
-        return starsqsum
-        
+            return np.asarray((starvalerrs/fits))**2
+            
+    starsq = (starvals/fits - avgf)**2 / get_sigmasq() + np.log(get_sigmasq()) # ignore the 2pi since that is just a constant for the chisq
+    starsq = np.asarray(starsq)
+    starsqsum = np.sum(starsq)
+    return starsqsum   
+       
+def lnlike(params, tab, num_cpu=4):
+    global count
+    if count % 20 == 0: print count 
+    count+=1   
     realparams = params
     if use_f:
         realparams, lnf = params[:-1], params[-1]
     #print realparams
     starIDarr = np.unique(tab['id'])
+    
+    ########## Doing it with multiprocessing
+    #runs = [(tab[np.where(tab['id'] == star)[0]], realparams) for star in starIDarr]
+    #pool = Pool(processes=num_cpu)
+    #results = pool.map_async(chisqstar, runs)
+    #pool.close()
+    #pool.join()
+    #return -0.5 * np.sum(results.get())
+    ########## 
+    
     starsqsums = np.asarray([chisqstar(tab[np.where(tab['id'] == star)[0]], realparams) for star in starIDarr])     # an array of the sq of sums for each star
     totalsqsum = np.sum(starsqsums)
     return -0.5 * totalsqsum
@@ -205,43 +221,61 @@ def lnprob(params, tab):
         return -np.inf
     return lp + lnlike(params, tab)
 
+# Reduce the Table so that it doesn't have unused Columns that take up memory/time
+tabreduced = np.copy(tab)               
+tabreduced = Table(tabreduced)
+tabreduced.remove_columns(['avgmag', 'avgmagerr', 'avgflux','avgfluxerr'])
+count = 0
 if use_f:
     initialcoeff = np.zeros(len(func2read)+1)
     initialcoeff[0] = 1
     initialcoeff[-1] = np.log(f)
 else:
     initialcoeff = np.zeros(len(func2read))
-# Reduce the Table so that it doesn't have unused Columns that take up memory/time
-tabreduced = np.copy(tab)               
-tabreduced = Table(tabreduced)
-tabreduced.remove_columns(['avgmag', 'avgmagerr', 'avgflux','avgfluxerr'])
 
-#nll = lambda *args: -lnlike(*args)
-#result = op.minimize(nll, initialcoeff, args=(tabreduced,))
-#finalcoeff = result['x']
-#if use_f == True:
-#    int_res = integrate.nquad(funcintegrate, [bounds_x(), bounds_y()], args = (finalcoeff[:-1],))[0]   
-#else:
-#    int_res = integrate.nquad(funcintegrate, [bounds_x(), bounds_y()], args = (finalcoeff,))[0]   
-#int_res /= area() 
-#finalcoeff /= int_res
-finalcoeff = initialcoeff
-ndim, nwalkers = len(finalcoeff), 16
-pos = [finalcoeff + 1e-2*np.random.randn(ndim) for i in range(nwalkers)]
 
-remove_pos = np.array([])    
-for i, elem in enumerate(pos):
-    lp = lnprior(elem)
-    if not np.isfinite(lp):
-        remove_pos = np.append(remove_pos, i)
-pos = np.delete(pos, remove_pos, axis = 0)
+def get_pos(ndim, nwalkers, scale_factor, base_coeff = initialcoeff):
+    ''' Creates the initial tiny gaussian balls '''
+    pos = [base_coeff + scale_factor*np.random.randn(ndim) for i in range(nwalkers)]
+    def filter_pos(pos):
+        # filters the pos by making sure they are within the prior
+        remove_pos = np.array([])    
+        for i, elem in enumerate(pos):
+            lp = lnprior(elem)
+            if not np.isfinite(lp):
+                remove_pos = np.append(remove_pos, i)
+        pos = np.delete(pos, remove_pos, axis = 0)
+        return pos
+    
+    start_time = time.time()
+    pos = filter_pos(pos)
+    # the process below ensures that number of walkers equals the length of pos
+    while len(pos) - nwalkers != 0 and len(pos) - nwalkers < 0:
+        num = len(pos) - nwalkers
+        newpos = [initialcoeff + 1e-1*np.random.randn(ndim) for i in range(-1*num)]
+        pos = np.append(pos, newpos, axis = 0)
+        pos = filter_pos(pos)
+        if len(pos) - nwalkers > 0:
+            difference = len(pos) - nwalkers
+            pos = pos[:-difference]
+        if time.time()-start_time > 10.0:
+            warnings.warn("Warning...........Message")
+    return pos
+ndim, nwalkers = len(initialcoeff), 100
+pos = get_pos(ndim, nwalkers, scale_factor = 1e-1, base_coeff = initialcoeff)
+
+
+start_time = time.time()
+for position in pos:
+    lnlike(position, tabreduced)
+print time.time()-start_time
+
 
 import emcee
-sampler = emcee.EnsembleSampler(nwalkers, ndim, lnprob, args=(tabreduced,))
-sampler.run_mcmc(pos, 10)
-samples = sampler.chain[:, :, :].reshape((-1, ndim))
+#sampler = emcee.EnsembleSampler(nwalkers, ndim, lnprob, args=(tabreduced,))
+#sampler.run_mcmc(pos, 100)
+#samples = sampler.chain[:, :, :].reshape((-1, ndim))
 
-print x
 #import corner
 #fig = corner.corner(samples)
 
@@ -249,14 +283,14 @@ print x
 ############### Plotting ##################
 ###########################################
 
-#from matplotlib.ticker import MaxNLocator
-#plt.clf()
-#fig, axes = plt.subplots(len(initialcoeff), 1, sharex=True, figsize=(8, 9))
-#for axnum in range(len(initialcoeff)):
-#    axes[axnum].plot(sampler.chain[:, :, axnum].T, color="k", alpha=0.4)
-#    axes[axnum].yaxis.set_major_locator(MaxNLocator(5))
-#    #axes[axnum].set_ylabel("$0$")
-#fig.tight_layout(h_pad=0.0)
+from matplotlib.ticker import MaxNLocator
+plt.clf()
+fig, axes = plt.subplots(len(initialcoeff), 1, sharex=True)#, figsize=(8, 9))
+for axnum in range(len(initialcoeff)):
+    axes[axnum].plot(sampler.chain[:, :, axnum].T, color="k", alpha=0.4)
+    axes[axnum].yaxis.set_major_locator(MaxNLocator(5))
+    #axes[axnum].set_ylabel("$0$")
+fig.tight_layout(h_pad=0.0)
 
 # true values
 if use_f:
@@ -275,9 +309,7 @@ int_resmcmc /= area()
 mcmccoeff /= int_resmcmc
 
 if use_f:
-    print finalcoeff[-1]
     print mcmccoeff[-1]
-    finalcoeff = finalcoeff[:-1]
     mcmccoeff = mcmccoeff[:-1]
 
 from mpl_toolkits.mplot3d import Axes3D
@@ -307,12 +339,10 @@ def plotmesh(a, title = ''):
     ax = fig.add_subplot(111, projection='3d')
     ax.plot_wireframe(X, Y, Z, rstride=1, cstride=1, color='red')
     ax.set_title(title)
-    ax.set_zlim([.85,1.15])
+    #ax.set_zlim([.85,1.15])
     plt.legend()
     return fig
 
-#plt.show(plotmesh(convert2mesh(func2fit, coeff=initialcoeff), title = 'Initial: ' + str(funcname) + ' n = ' + str(n)))
-plt.show(plotmesh(convert2mesh(func2fit, coeff=finalcoeff), title = 'Final: ' + str(funcname) + ' n = ' + str(n)))
 plt.show(plotmesh(convert2mesh(func2fit, coeff=mcmccoeff), title = 'MCMC: ' + str(funcname) + ' n = ' + str(n)))
 
 finalfunc = lambda p, x, y: np.sum(func2fit(x,y) * np.asarray(p))     # The final flat
