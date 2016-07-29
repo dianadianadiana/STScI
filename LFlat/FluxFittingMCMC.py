@@ -20,7 +20,10 @@ use_f = False
 f = 0.05
 n = 5
 nx = ny = n
-funcname = 'cheb' + '2d'
+chosenfunc = 'cheb'
+funcname = chosenfunc + '2d'
+nwalkers = 100
+nsteps = 100
 
 ###########################################
 ######### Functions to Optimize ###########
@@ -38,6 +41,35 @@ Returns for all functions:
                 parameters, x and y
 '''
 from sympy import * 
+def norder2dpoly(n):
+        ''' 
+        Purpose
+        -------
+        Create the 2D nth order polynomial
+        
+        How it works:
+            a 2nd order can be grouped like: 1; x1y0 x0y1; x2y0 x1y1 x0y2
+            (where x0 = x**0, x1 = x**1 and so on)
+            So the degree of x starts at a certain number (currnum) and decreases
+            by one, while the degree of y starts at 0 and increase by one until currnum
+        Note: 
+            * Just found out (2 weeks later after making this), that there 
+            exists numpy.polynomial.polynomial.polyvander2d which does what I made
+        '''
+        x = Symbol('x')
+        y = Symbol('y')
+        funcarr = np.array([])
+        for currnum in range(n+1):
+            xi = currnum
+            yi = 0
+            while yi <= currnum:
+                funcarr = np.append(funcarr, x**xi * y**yi)
+                yi += 1
+                xi -= 1
+        funclist = funcarr.tolist()     # lambdify only takes in lists and not arrays
+        f = lambdify((x, y), funclist)  # lambdify looks at 1 + 0*x as 1 and makes f[0] = 1
+        return funclist, f              # return the list in case we want to look at how the function is
+        
 def norder2dcheb(nx, ny):
     import numpy.polynomial.chebyshev as cheb
     ''' 
@@ -53,7 +85,23 @@ def norder2dcheb(nx, ny):
     funclist = funcarr.tolist()     # lambdify only takes in lists and not arrays
     f = lambdify((x, y), funclist)  # Note: lambdify looks at 1 as 1 and makes f[0] = 1 and not an array
     return funclist, f
-
+    
+def norder2dlegendre(nx, ny):
+    import numpy.polynomial.legendre as leg
+    ''' 
+        Purpose
+        -------
+        Create the 2D nx th and ny th order Legendre polynomial using
+        numpy.polynomial.legendre.legvander2d(x, y, [nx, ny])
+    '''
+    x = Symbol('x')
+    y = Symbol('y')
+    funcarr = leg.legvander2d(x,y,[nx,ny])
+    funcarr = funcarr[0]            # Because chebvander2d returns a 2d matrix
+    funclist = funcarr.tolist()     # lambdify only takes in lists and not arrays
+    f = lambdify((x, y), funclist)  # Note: lambdify looks at 1 as 1 and makes f[0] = 1 and not an array
+    return funclist, f
+    
 ###########################################
 ######### Creating the Table ##############
 ###########################################
@@ -61,9 +109,9 @@ def norder2dcheb(nx, ny):
 from astropy.table import Table, Column
 ############
 # Read in the data
-path = '/Users/dkossakowski/Desktop/Data/'
-datafil = 'wfc_f606w_r5.lflat'
-data = np.genfromtxt(path + datafil)
+#path = '/Users/dkossakowski/Desktop/Data/'
+#datafil = 'wfc_f606w_r5.lflat'
+#data = np.genfromtxt(path + datafil)
 
 # Create an Astropy table
 # tab[starID][0]: starID; ...[2]: chip#; ...[3]: x pixel; ...[4]: y pixel; 
@@ -77,6 +125,8 @@ data = np.genfromtxt(path + datafil)
 ############
 
 ############ Read in NEW data :: comment/uncomment this snippet
+path = '/Users/dkossakowski/Desktop/Data/'
+path = '/user/dkossakowski/'
 datafil = 'flatfielddata.txt'
 #datafil = 'flatfielddata_fudged.txt'
 #datafil = 'fakeflatdata.txt'
@@ -86,10 +136,6 @@ types = [int, int, int, np.float64, np.float64, np.float64, np.float64]
 tab = Table(data, names=names, dtype=types)
 tab.remove_columns(['filenum', 'chip'])
 tab = tab[np.where(tab['magerr'] < 1.)[0]]
-#tab = tab[np.where(tab['x'] <= 950)[0]]
-#tab = tab[np.where(tab['x'] >= 100)[0]]
-#tab = tab[np.where(tab['y'] <= 950)[0]]
-#tab = tab[np.where(tab['x'] >= 100)[0]]
 ############
 #chosen = np.random.choice(len(tab), 4000, replace = False)
 #tab = tab[chosen]
@@ -118,14 +164,17 @@ tab, starIDarr = sigmaclip_delmagdelflux(tab, starIDarr, flux = True, mag = Fals
 tab =  tab[np.where(tab['flux']/tab['fluxerr'] > 5)[0]]                                # S/N ratio for flux is greater than 5
 print 'Number of observations after filtering:\t', len(tab)
 print 'Number of stars after filtering:\t', len(starIDarr)
-lentab0 = len(tab)
-lenstar0 = len(starIDarr)
 
 ###########################################
 ###########################################
 ###########################################
 
-func2read, func2fit = norder2dcheb(nx, ny)        # nx th and ny th order 2d Chebyshev Polynomial
+if chosenfunc == 'poly':
+    func2read, func2fit = norder2dpoly(n) 
+elif chosenfunc == 'cheb':
+    func2read, func2fit = norder2dcheb(nx, ny)        # nx th and ny th order 2d Chebyshev Polynomial
+elif chosenfunc == 'leg':
+    func2read, func2fit = norder2dlegendre(nx, ny) 
 print 'Function that is being fit:', func2read
 
 ##########
@@ -146,31 +195,38 @@ def bounds_x():
 def area():
     return np.sum(np.abs(bounds_y() + bounds_x()))
 ##########
+
+##########
+def convert2mesh(func2fit, coeff, xpixel = XPIX, ypixel = YPIX):
+    ''' Creates a mesh using the coefficients and x and y pixel values '''
+    if SCALE2ONE:
+        xpixel = (xpixel - CHIPXLEN/2)/(CHIPXLEN/2)
+        ypixel = (ypixel - CHIPYLEN/2)/(CHIPYLEN/2)
+    xx, yy = np.meshgrid(xpixel, ypixel, sparse = True, copy = False) 
+    fmesh = func2fit(xx, yy)
+    coeff = np.asarray(coeff)
+    fmesh[0] = np.ones(len(xpixel))
+    zzfit = np.sum(fmesh * coeff, axis = 0)
+    return [xx, yy, zzfit]
+##########
+
 from multiprocessing import Pool
 
 def lnprior(params):
     realparams = params
     if use_f:
         realparams, lnf = params[:-1], params[-1]
-
-    #integrate_result = integrate.nquad(funcintegrate, [bounds_x(), bounds_y()], args = (realparams,))[0]   
-    #integrate_result /= area()
-    #realparams = realparams / integrate_result
-    
-    if SCALE2ONE:
-        four_corners = np.array([[-1,-1], [-1,1], [1,-1], [1,1]])
-    else:
-        four_corners = np.array([[0, 0], [0, CHIPYLEN], [CHIPXLEN, 0], [CHIPXLEN, CHIPYLEN]])
-    four_corners_vals = [np.sum(func2fit(x,y) * realparams) + 1 for x,y in four_corners]
-    
-    diff_maxmin = np.max(four_corners_vals) - np.min(four_corners_vals)
-
-    if -.12 < realparams[0] < .12 and diff_maxmin <= .30: #and -10.0 < lnf < 1.0:
+    a = convert2mesh(func2fit, realparams, xpixel = np.linspace(0,CHIPXLEN,256), ypixel = np.linspace(0,CHIPYLEN,256))[2]
+    diff_maxmin = np.max(a) - np.min(a)
+    #-.12 < realparams[0] < .5 and 
+    if diff_maxmin <= .30: #and -10.0 < lnf < 1.0:
         return 0.0
     return -np.inf
- 
+    
+########## Doing it with multiprocessing
 #def chisqstar(inputs):
 #    starrows, p = inputs
+########## 
 def chisqstar(starrows, p):
     starvals = starrows[SPACE_VAL]
     starvalerrs = starrows[SPACE_VAL + 'err']
@@ -184,8 +240,7 @@ def chisqstar(starrows, p):
     def get_sigmasq():
         if use_f:
             return np.asarray((starvalerrs/fits))**2 + np.exp(2*lnf)*avgf**2
-        else:
-            return np.asarray((starvalerrs/fits))**2
+        return np.asarray((starvalerrs/fits))**2
             
     starsq = (starvals/fits - avgf)**2 / get_sigmasq() + np.log(get_sigmasq()) # ignore the 2pi since that is just a constant for the chisq
     starsq = np.asarray(starsq)
@@ -199,7 +254,6 @@ def lnlike(params, tab, num_cpu=4):
     realparams = params
     if use_f:
         realparams, lnf = params[:-1], params[-1]
-    #print realparams
     starIDarr = np.unique(tab['id'])
     
     ########## Doing it with multiprocessing
@@ -221,20 +275,7 @@ def lnprob(params, tab):
         return -np.inf
     return lp + lnlike(params, tab)
 
-# Reduce the Table so that it doesn't have unused Columns that take up memory/time
-tabreduced = np.copy(tab)               
-tabreduced = Table(tabreduced)
-tabreduced.remove_columns(['avgmag', 'avgmagerr', 'avgflux','avgfluxerr'])
-count = 0
-if use_f:
-    initialcoeff = np.zeros(len(func2read)+1)
-    initialcoeff[0] = 1
-    initialcoeff[-1] = np.log(f)
-else:
-    initialcoeff = np.zeros(len(func2read))
-
-
-def get_pos(ndim, nwalkers, scale_factor, base_coeff = initialcoeff):
+def get_pos(ndim, nwalkers, scale_factor, base_coeff):
     ''' Creates the initial tiny gaussian balls '''
     pos = [base_coeff + scale_factor*np.random.randn(ndim) for i in range(nwalkers)]
     def filter_pos(pos):
@@ -246,7 +287,6 @@ def get_pos(ndim, nwalkers, scale_factor, base_coeff = initialcoeff):
                 remove_pos = np.append(remove_pos, i)
         pos = np.delete(pos, remove_pos, axis = 0)
         return pos
-    
     start_time = time.time()
     pos = filter_pos(pos)
     # the process below ensures that number of walkers equals the length of pos
@@ -258,79 +298,75 @@ def get_pos(ndim, nwalkers, scale_factor, base_coeff = initialcoeff):
         if len(pos) - nwalkers > 0:
             difference = len(pos) - nwalkers
             pos = pos[:-difference]
-        if time.time()-start_time > 10.0:
-            warnings.warn("Warning...........Message")
+        if time.time()-start_time > 45.0:
+            warnings.warn("Warning: Finding the intial MCMC walkers is taking too long")
     return pos
-ndim, nwalkers = len(initialcoeff), 100
-pos = get_pos(ndim, nwalkers, scale_factor = 1e-1, base_coeff = initialcoeff)
-
+    
+# Reduce the Table so that it doesn't have unused Columns that take up memory/time
+tabreduced = np.copy(tab)               
+tabreduced = Table(tabreduced)
+tabreduced.remove_columns(['avgmag', 'avgmagerr', 'avgflux','avgfluxerr'])
+count = 0
+if use_f:
+    initialcoeff = np.zeros(len(func2read)+1)
+    initialcoeff[0] = 1
+    initialcoeff[-1] = np.log(f)
+else:
+    initialcoeff = np.zeros(len(func2read))
+        
+ndim = len(initialcoeff)
+some_time = time.time()
+pos = get_pos(ndim, nwalkers, scale_factor = 1e-4, base_coeff = initialcoeff)
+print 'Getting pos', time.time()-some_time
 
 start_time = time.time()
-for position in pos:
-    lnlike(position, tabreduced)
-print time.time()-start_time
-
-
-import emcee
-#sampler = emcee.EnsembleSampler(nwalkers, ndim, lnprob, args=(tabreduced,))
-#sampler.run_mcmc(pos, 100)
-#samples = sampler.chain[:, :, :].reshape((-1, ndim))
-
+sampler = emcee.EnsembleSampler(nwalkers, ndim, lnprob, args=(tabreduced,))
+sampler.run_mcmc(pos, nsteps)
+samples = sampler.chain[:, :, :].reshape((-1, ndim))
+print 'Time to do MCMC', time.time()-start_time
 #import corner
 #fig = corner.corner(samples)
 
-###########################################
-############### Plotting ##################
-###########################################
-
-from matplotlib.ticker import MaxNLocator
-plt.clf()
-fig, axes = plt.subplots(len(initialcoeff), 1, sharex=True)#, figsize=(8, 9))
-for axnum in range(len(initialcoeff)):
-    axes[axnum].plot(sampler.chain[:, :, axnum].T, color="k", alpha=0.4)
-    axes[axnum].yaxis.set_major_locator(MaxNLocator(5))
-    #axes[axnum].set_ylabel("$0$")
-fig.tight_layout(h_pad=0.0)
-
-# true values
+### Get the true values
 if use_f:
     samples[:, -1] = np.exp(samples[:, -1])
 valswerrs = map(lambda v: (v[1], v[2]-v[1], v[1]-v[0]),
                              zip(*np.percentile(samples, [16, 50, 84],axis=0)))
 valswerrs = np.asarray(valswerrs)
 mcmccoeff = valswerrs.T[0]   
-mcmccoeff[0] += 1
+mcmccoeff[0] += 1 # Because we defined p0 as p0-1 so we are just adding the 1 back in
+###
 
+### Normalize
 if use_f:
     int_resmcmc = integrate.nquad(funcintegrate, [bounds_x(), bounds_y()], args = (mcmccoeff[:-1],))[0]   
 else:
     int_resmcmc = integrate.nquad(funcintegrate, [bounds_x(), bounds_y()], args = (mcmccoeff,))[0]  
 int_resmcmc /= area()
 mcmccoeff /= int_resmcmc
-
+###
 if use_f:
     print mcmccoeff[-1]
     mcmccoeff = mcmccoeff[:-1]
+    
+###########################################
+############### Plotting ##################
+###########################################
+
+from matplotlib.ticker import MaxNLocator
+
+def plotwalkerpaths(num_subplots):
+    ''' Plot the walker paths for your choice of num_subplots '''
+    fig, axes = plt.subplots(num_subplots, 1, sharex=True)#, figsize=(8, 9))
+    for axnum in range(num_subplots):
+        axes[axnum].plot(sampler.chain[:, :, axnum].T, color="k", alpha=0.4)
+        axes[axnum].yaxis.set_major_locator(MaxNLocator(5))
+        #axes[axnum].set_ylabel("$0$")
+    fig.tight_layout(h_pad=0.0)
+    return fig
 
 from mpl_toolkits.mplot3d import Axes3D
 import matplotlib.pyplot as plt
-
-def convert2mesh(func2fit, coeff, xpixel = XPIX, ypixel = YPIX):
-    ''' Creates a mesh using the coefficients and x and y pixel values '''
-    if SCALE2ONE:
-        xpixel = (xpixel - CHIPXLEN/2)/(CHIPXLEN/2)
-        ypixel = (ypixel - CHIPYLEN/2)/(CHIPYLEN/2)
-    xx, yy = np.meshgrid(xpixel, ypixel, sparse = True, copy = False) 
-    fmesh = func2fit(xx, yy)
-    coeff = np.asarray(coeff)
-    zzfit = [[0 for i in xpixel] for j in ypixel]
-    k = 0
-    while k < len(coeff):
-        zzfit += coeff[k]*fmesh[k]
-        k+=1
-    # Currently zzfit[0] are the values of varying x and keeping y = 0 (constant
-    # Transposing it makes zzfit[0] the values of x = 0 and varying y
-    return [xx, yy, zzfit]
        
 def plotmesh(a, title = ''):
     ''' Returns the figure of the mesh fit plot '''
@@ -343,7 +379,7 @@ def plotmesh(a, title = ''):
     plt.legend()
     return fig
 
-plt.show(plotmesh(convert2mesh(func2fit, coeff=mcmccoeff), title = 'MCMC: ' + str(funcname) + ' n = ' + str(n)))
+#plt.show(plotmesh(convert2mesh(func2fit, coeff=mcmccoeff), title = 'MCMC: ' + str(funcname) + ' n = ' + str(n)))
 
 finalfunc = lambda p, x, y: np.sum(func2fit(x,y) * np.asarray(p))     # The final flat
 
@@ -384,13 +420,13 @@ def simple3dplotindstarsafter(tab, coeff, title = ''):
     ax.set_title(title)
     plt.show(fig)
     
-final = apply_flat(tab, mcmccoeff, SPACE_VAL)
 
 ############### If we want to plot the before/after of applying the flat (as is as well as the normalized delta)
-simple3dplot(tab, tab[SPACE_VAL], title = 'Before LFlat, just ' + SPACE_VAL + ' values plotted')
-simple3dplot(tab, final, title = 'After LFlat, just ' + SPACE_VAL + ' values plotted')
-simple3dplot(tab, (tab[SPACE_VAL] - tab['avg'+SPACE_VAL])/ tab['avg'+SPACE_VAL], title = 'Before LFlat, normalized delta ' + SPACE_VAL)
-simple3dplot(tab, (final - tab['avg'+SPACE_VAL])/tab['avg'+SPACE_VAL], title = 'After LFlat, normalized delta ' + SPACE_VAL) # Not QUITE right because there is a new mean
+#final = apply_flat(tab, mcmccoeff, SPACE_VAL)
+#simple3dplot(tab, tab[SPACE_VAL], title = 'Before LFlat, just ' + SPACE_VAL + ' values plotted')
+#simple3dplot(tab, final, title = 'After LFlat, just ' + SPACE_VAL + ' values plotted')
+#simple3dplot(tab, (tab[SPACE_VAL] - tab['avg'+SPACE_VAL])/ tab['avg'+SPACE_VAL], title = 'Before LFlat, normalized delta ' + SPACE_VAL)
+#simple3dplot(tab, (final - tab['avg'+SPACE_VAL])/tab['avg'+SPACE_VAL], title = 'After LFlat, normalized delta ' + SPACE_VAL) # Not QUITE right because there is a new mean
 ###############
 
 ############### If we want to see/plot the mean of each star before and after applying the flat
