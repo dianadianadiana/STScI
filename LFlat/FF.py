@@ -1,9 +1,55 @@
+"""
+RELICS Data Pipeline: catalogs made with tweak-reg.  Runs astrodrizzle setps 1-6
+for each filter set to get CR cleans, then runs tweakreg on each
+individual exposure to get catalogs.
+
+
+:Author: Diana Kossakowski
+
+:Organization: Space Telescope Science Institute
+
+:History:
+    * Aug 2016 Finished
+
+Examples
+--------
+To call from command line::
+    python make_catalogs.py
+
+"""
+
+# Global Imports
 import numpy as np
-import emcee
 import matplotlib.pyplot as plt
 import scipy.optimize as op
 import warnings
 import time
+
+from multiprocessing import Pool
+
+# Local Imports
+import emcee
+
+# Functions
+from sympy import *
+import numpy.polynomial.chebyshev as cheb
+import numpy.polynomial.legendre as leg
+from scipy import integrate
+
+# Data
+from astropy.table import Table, Column
+
+# Filter
+# These functions are imported form DataInfoTab.py
+from DataInfoTab import remove_stars_tab, convertmag2flux, convertflux2mag,\
+                        make_avgmagandflux, sigmaclip_starmagflux,         \
+                        sigmaclip_delmagdelflux                                        
+
+# Plotting
+import corner
+from mpl_toolkits.mplot3d import Axes3D
+import matplotlib.pyplot as plt
+from matplotlib.ticker import MaxNLocator
 
 # Creating constants to keep a "standard"
 CHIPXLEN =  CHIPYLEN = 1024.
@@ -21,33 +67,11 @@ Norder = 1
 Nx = Ny = Norder
 CHOSENFUNC = 'cheb'
 funcname = CHOSENFUNC + '2d'
-NWALKERS = 16
-NSTEPS = 50
+NWALKERS = 32
+NSTEPS = 100
 path = '/Users/dkossakowski/Desktop/Data/'
 path = '/user/dkossakowski/'
 datafil = 'sbc_f125lp.phot'
-
-from multiprocessing import Pool
-
-# Functions
-from sympy import *
-import numpy.polynomial.chebyshev as cheb
-import numpy.polynomial.legendre as leg
-from scipy import integrate
-
-# Data
-from astropy.table import Table, Column
-
-# Filter
-from DataInfoTab import remove_stars_tab, convertmag2flux, convertflux2mag,\
-                        make_avgmagandflux, sigmaclip_starmagflux,         \
-                        sigmaclip_delmagdelflux                                        # These functions are imported form DataInfoTab.py
-
-# Plotting
-import corner
-from mpl_toolkits.mplot3d import Axes3D
-import matplotlib.pyplot as plt
-from matplotlib.ticker import MaxNLocator
 
 ###########################################
 ######### Functions to Optimize ###########
@@ -123,7 +147,7 @@ def norder2dlegendre(nx = Nx, ny = Ny):
     f = lambdify((x, y), funclist)  # Note: lambdify looks at 1 as 1 and makes f[0] = 1 and not an array
     return funclist, f
     
-def get_function(chosenfunc=CHOSENFUNC, n = Norder):
+def get_function(chosenfunc=CHOSENFUNC, n=Norder):
     nx = ny = n
     if chosenfunc == 'poly':
         func2read, func2fit = norder2dpoly(n) 
@@ -138,16 +162,16 @@ def funcintegrate(x, y, coeff, chosenfunc = CHOSENFUNC):
     func2read, func2fit = get_function(chosenfunc)
     return np.sum(func2fit(x, y) * coeff)
 
-def bounds_y():
-    if SCALE2ONE:
-        return [-1, 1]
-    else:
-        return [0, CHIPYLEN]
 def bounds_x():
     if SCALE2ONE:
         return [-1, 1]
     else:
         return [0, CHIPXLEN]
+def bounds_y():
+    if SCALE2ONE:
+        return [-1, 1]
+    else:
+        return [0, CHIPYLEN]
 def area():
     return np.sum(np.abs(bounds_y() + bounds_x()))
 ##########
@@ -165,11 +189,6 @@ def do_table(fil, names, types, removenames=[]):
     tab = Table(data, names=names, dtype=types)
     tab.remove_columns(removenames)
     return tab
-    
-names = ['id', 'filenum', 'chip', 'x', 'y', 'mag', 'magerr']
-types = [int, int, int, np.float64, np.float64, np.float64, np.float64]
-fil = '/Users/dkossakowski/Desktop/Data/sbc_f125lp.phot'
-table = do_table(fil=fil, names = names, types = types, removenames = ['filenum', 'chip'])
 
 ###########################################
 ###########################################
@@ -182,7 +201,7 @@ table = do_table(fil=fil, names = names, types = types, removenames = ['filenum'
 def do_filter(tab, mag_constrain = [13,25], min_num_obs = 4, flux_ratio = 5):
     # this is assuming that tab['mag'] and tab['magerr'] exist
     #tab.sort(['id'])                                 # sort the table by starID
-    starIDarr = np.unique(tab['id'])                 # collect all the star IDs
+    starIDarr = np.unique(tab['id'])                  # collect all the star IDs
     num_stars0 = np.double(len(starIDarr))
     num_obs0 = np.double(len(tab))
     print '******************************************'
@@ -207,8 +226,6 @@ def do_filter(tab, mag_constrain = [13,25], min_num_obs = 4, flux_ratio = 5):
     print '******************************************\n'
     return tab
 
-table = do_filter(table)
-
 ###########################################
 ###########################################
 ###########################################
@@ -228,23 +245,10 @@ def convert2mesh(func2fit, coeff, xpixel = XPIX, ypixel = YPIX):
     return [xx, yy, zzfit]
 ##########
 
-
 def lnprior(params):
     realparams = params
-    #print realparams
     if USE_F:
         realparams, lnf = params[:-1], params[-1]
-    #a = convert2mesh(func2fit, realparams, xpixel = np.linspace(0,CHIPXLEN,256), ypixel = np.linspace(0,CHIPYLEN,256))[2]
-    #diff_maxmin = np.max(a) - np.min(a)
-    
-    #temprealparams = np.copy(realparams)
-    ##temprealparams[0] += 1
-    ##print temprealparams
-    #integrate_result = integrate.nquad(funcintegrate, [bounds_x(), bounds_y()], args = (temprealparams,))[0]   
-    #integrate_result /= area()
-    #realparams = realparams / integrate_result
-    #print realparams
-    #-.12 < realparams[0] < .5 and 
     #if diff_maxmin <= .30: #and -10.0 < lnf < 1.0:
     if -.1 < realparams[0] < .1:
         return 0.0
@@ -288,7 +292,6 @@ def lnlike(params, tab, func2fit, num_cpu=4):
     #return -0.5 * np.sum(results.get())
     ########## 
     
-    
     starsqsums = np.asarray([chisqstar(tab[np.where(tab['id'] == star)[0]], realparams, func2fit) for star in starIDarr])     # an array of the sq of sums for each star
     totalsqsum = np.sum(starsqsums)
     return -0.5 * totalsqsum
@@ -326,63 +329,68 @@ def get_pos(ndim, NWALKERS, scale_factor, base_coeff):
             warnings.warn("Warning: Finding the intial MCMC walkers is taking too long")
     return pos
     
-def do_MCMC(tab, scale_factor = 1e-1, chosenfunc=CHOSENFUNC, n = Norder):
+def do_MCMC(tab, scale_factor=1e-1, chosenfunc=CHOSENFUNC, n=Norder, burnin=0, txtfil=''):
 
     print '******************************************'
     print '*************** START MCMC ***************'
     print '******************************************'
+    
+    ### Get the function
     func2read, func2fit = get_function(chosenfunc, n)
     print 'Function that is being fit:', func2read
+    ###
     
-    # Reduce the Table so that it doesn't have unused Columns that take up memory/time
+    ### Reduce the Table so that it doesn't have unused Columns that take up memory/time
     tabreduced = np.copy(tab)               
     tabreduced = Table(tabreduced)
     tabreduced.remove_columns(['avgmag', 'avgmagerr', 'avgflux','avgfluxerr'])
+    
     if SPACE_VAL == 'flux':
         tabreduced.remove_columns(['mag', 'magerr'])
     else:
         tabreduced.remove_columns(['flux','fluxerr'])
+    ###
     
-    # Set up the initial coefficients 
+    ### Set up the initial coefficients 
     if USE_F:
         initialcoeff = np.zeros(len(func2read)+1)
         initialcoeff[-1] = np.log(F)
     else:
         initialcoeff = np.zeros(len(func2read))
+    ###
     
-    # Determine the initial locations of the walkers
+    ### Determine the initial locations of the walkers
     ndim = len(initialcoeff)
     start_time = time.time()
-    pos = get_pos(ndim, NWALKERS, scale_factor, base_coeff = initialcoeff)
+    pos = get_pos(ndim, NWALKERS, scale_factor, base_coeff=initialcoeff)
     print 'Time (s) getting the initial positions of the walkers', time.time() - start_time
-
+    ### 
+    
     start_time = time.time()
     sampler = emcee.EnsembleSampler(NWALKERS, ndim, lnprob, args=(tabreduced, func2fit,))
-    #samp = sampler.run_mcmc(pos, NSTEPS)[0]
+    
+    if burnin:
+        pos = sampler.run_mcmc(pos, burnin)[0]
 
-    print '********'
-    writefil = 'chain1.txt'
-    f = open(writefil, "w")
-    f.write('nsteps: ' + str(NSTEPS) + '\n')
-    f.write('nwalkers: ' + str(NWALKERS) + '\n')
-    f.write('ndim: ' + str(ndim) + '\n')
-    f.close()
-    samples1 = np.array([])
-    for i, result in enumerate(sampler.sample(pos, iterations=NSTEPS, storechain=True)):
-        position = result[0]
-        print i
-        print position
-        f = open(writefil, "a")
-        f.write('nstep #' + str(i) + '\n')
-        for k in range(position.shape[0]):
-            f.write('{0:4d} {1:s}\n'.format(k, " ".join(str(position[k]))))
-            samples1 = np.append(samples1, [position[k]])
+    if txtfil:
+        writefil = 'chain1.txt'
+        f = open(writefil, "w")
+        f.write('nsteps: '   + str(NSTEPS)     + '\n')
+        f.write('nwalkers: ' + str(NWALKERS)   + '\n')
+        f.write('ndim: '     + str(ndim)       + '\n')
         f.close()
+    for i, result in enumerate(sampler.sample(pos, iterations=NSTEPS, storechain=True)):
+        if i%20 == 0: print i 
+        if txtfil:
+            position = result[0]
+            f = open(writefil, "a")
+            f.write('nstep #' + str(i) + '\n')
+            for k in range(position.shape[0]):
+                f.write('{0:4d} {1:s}\n'.format(k, " ".join(str(position[k]))))
+            f.close()
     samples = sampler.chain[:, :, :].reshape((-1, ndim))
-    samples1 = samples1.reshape(NSTEPS*NWALKERS, ndim)
-    print 'Time to do MCMC', time.time()-start_time
-    print 
-    print 
+    print 'Time it took to do MCMC', time.time()-start_time
+    
     ### Get the true values
     if USE_F:
         samples[:, -1] = np.exp(samples[:, -1])
@@ -393,18 +401,12 @@ def do_MCMC(tab, scale_factor = 1e-1, chosenfunc=CHOSENFUNC, n = Norder):
     mcmccoeff[0] += 1 # Because we defined p0 as p0-1 so we are just adding the 1 back in
     print mcmccoeff
     ###
+    
     if USE_F:
         f = mcmccoeff[-1]
         mcmccoeff = mcmccoeff[:-1]
     else:
         f = 0
-
-    valswerrs1 = map(lambda v: (v[1], v[2]-v[1], v[1]-v[0]),
-                                zip(*np.percentile(samples1, [16, 50, 84],axis=0)))
-    valswerrs1 = np.asarray(valswerrs1)
-    mcmccoeff1 = valswerrs1.T[0]   
-    mcmccoeff1[0] += 1 # Because we defined p0 as p0-1 so we are just adding the 1 back in
-    print mcmccoeff1
     
     ### Normalize
     int_resmcmc = integrate.nquad(funcintegrate, [bounds_x(), bounds_y()], args = (mcmccoeff,))[0]  
@@ -414,16 +416,13 @@ def do_MCMC(tab, scale_factor = 1e-1, chosenfunc=CHOSENFUNC, n = Norder):
     print '******************************************'
     print '**************** END MCMC ****************'
     print '******************************************\n'
-    return [sampler, samples, samples1, valswerrs, mcmccoeff,mcmccoeff1, f, ndim]
-
-sampler, samples,samples1, vaslwerrs, mcmccoeff, mcmccoeff1, f, ndim = do_MCMC(table, scale_factor=1e-1, chosenfunc=CHOSENFUNC, n=Norder)
+    return [sampler, samples, valswerrs, mcmccoeff,  f, ndim]
 
 def get_samplerchain(sampler, start, end, ndim):
     if start < 0:
         start = 0
-    totalsamp = sampler.chain[:, :, :].reshape((-1, ndim))
-    if end > len(totalsamp):
-        end = len(totalsamp)
+    if end > NSTEPS:
+        end = NSTEPS
     samp = sampler.chain[:, start:end, :].reshape((-1, ndim))
     return samp
 
@@ -431,22 +430,21 @@ def get_samplerchain(sampler, start, end, ndim):
 ############### Plotting ##################
 ###########################################
 
-def plotwalkerpaths(samp, num_subplots):
+def plotwalkerpaths(samp, num_subplots, start=0, end=NSTEPS):
     ''' Plot the walker paths for your choice of num_subplots '''
     fig, axes = plt.subplots(num_subplots, 1, sharex=True)#, figsize=(8, 9))
     for axnum in range(num_subplots):
         #axes[axnum].plot(samp[:,axnum].reshape(NSTEPS, NWALKERS, order='F'), color="k", alpha=.4)
-        axes[axnum].plot(sampler.chain[:, :, axnum].T, color="k", alpha=0.4)
+        axes[axnum].plot(sampler.chain[:, start:end, axnum].T, color="k", alpha=0.4)
         axes[axnum].yaxis.set_major_locator(MaxNLocator(5))
-        #axes[axnum].set_ylabel("$0$")
+        axes[axnum].set_ylabel('Coeff #' + str(axnum))
+        axes[axnum].set_xticklabels(np.arange(start,end+1,10))
     fig.tight_layout(h_pad=0.0)
     return fig
 
-plt.show(plotwalkerpaths(samples, len(mcmccoeff)))
-
-#plt.show(plotwalkerpaths(samples1, len(mcmccoeff)))
 def plottriangle(samp):
     fig = corner.corner(samp)
+    return fig
        
 def plotmesh(a, title = ''):
     ''' Returns the figure of the mesh fit plot '''
@@ -455,11 +453,8 @@ def plotmesh(a, title = ''):
     ax = fig.add_subplot(111, projection='3d')
     ax.plot_wireframe(X, Y, Z, rstride=1, cstride=1, color='red')
     ax.set_title(title)
-    #ax.set_zlim([.85,1.15])
     plt.legend()
     return fig
-
-#plt.show(plotmesh(convert2mesh(func2fit, coeff=mcmccoeff), title = 'MCMC: ' + str(funcname) + ' n = ' + str(n)))
 
 finalfunc = lambda p, x, y: np.sum(func2fit(x,y) * np.asarray(p))     # The final flat
 
@@ -500,6 +495,83 @@ def simple3dplotindstarsafter(tab, coeff, title = ''):
     ax.set_title(title)
     plt.show(fig)
     
+if __name__ == '__main__':
+    
+    parser = argparse.ArgumentParser(description="Perform MCMC to find the coefficients for the LFlat")
+    
+    parser.add_arguement("-filt", "--filtertable", action = "store_false",
+                        help="True if filtering the table")
+    parser.add_arguement("-mcmc", "--mcmc", action = "store_false",
+                        help="True if performing MCMC")
+    parser.add_arguement("-s2one", "--scale2one", action = "store_false",
+                        help="True if scaling to one")
+    
+    parser.add_argument("--names", default=['id', 'filenum', 'chip', 'x', 'y', 'mag', 'magerr'],
+                        help="The names of the table")
+    parser.add_argument("--types", default=[int, int, int, np.float64, np.float64, np.float64, np.float64],
+                        help="The types of the table")
+    parser.add_argument("--remnames", default=['filenum', 'chip'],
+                        help="The names to remove from the table")
+    parser.add_arguement("--datafile", type=int,
+                        help="The location of the datafile")
+                        
+    parser.add_argument("--n", type=int, choices=[0,1,2,3,4,5,6,7], default=1,
+                        help="The nth order of the fit")
+    parser.add_arguemnt("--chosenfunc", type=str, choices=["poly", "cheb", "leg"], default="cheb",
+                        help="The functional form, {poly, cheb, or leg}")
+    parser.add_arguement("--nwalkers", type=int, default=10,
+                        help="The number of walkers")
+    parser.add_arguement("--nsteps", type=int, default=10,
+                        help="The number of steps each walker takes")
+    parser.add_arguement("--scale_factor", type=np.double, default=1e-1,
+                        help="SOMETHING")
+    parser.add_arguement("--burnin", type=int, default=0,
+                        help="SOMETHING")    
+
+    args = parser.parse_args()
+        
+    #names = ['id', 'filenum', 'chip', 'x', 'y', 'mag', 'magerr']
+    #types = [int, int, int, np.float64, np.float64, np.float64, np.float64]
+    #fil = '/Users/dkossakowski/Desktop/Data/sbc_f125lp.phot'
+    
+    #table = do_table(fil=fil, names=names, types=types, removenames=['filenum', 'chip'])
+    #sampler, samples, vaslwerrs, mcmccoeff, f, ndim = do_MCMC(table, scale_factor=1e-1, chosenfunc=CHOSENFUNC, n=Norder, burnin=0)
+
+    table = do_table(fil=args.datafile, names=args.names, types=args.types, removenames=args.remnames)
+    if args.filtertable:
+        table = do_filter(table)
+    
+    if args.mcmc:
+        sampler, samples, vaslwerrs, mcmccoeff, f, ndim = do_MCMC(table, scale_factor=args.scale_factor, chosenfunc=args.chosenfunc, n=agrs.n, burnin=args.burnin)
+
+        plt.show(plotwalkerpaths(samples, len(mcmccoeff)))
+        plt.show(plottriangle(samples))
+        plt.show(plotmesh(convert2mesh(get_function(args.chosenfunc, args.n)[1], coeff=mcmccoeff), title = 'MCMC: ' + str(args.chosenfunc) + ' n = ' + str(args.n)))
+    
+# Creating constants to keep a "standard"
+CHIPXLEN =  CHIPYLEN = 1024.
+
+BIN_NUM = 2
+XBIN = YBIN = 10. * BIN_NUM
+XPIX = np.linspace(0,     CHIPXLEN,     XBIN)
+YPIX = np.linspace(0,     CHIPYLEN,     YBIN)
+
+#SCALE2ONE = True
+SPACE_VAL = 'flux'                               # What space we are working in ('flux' or 'mag')
+USE_F = False
+F = 0.05
+#Norder = 1
+#Nx = Ny = Norder
+#CHOSENFUNC = 'cheb'
+#funcname = CHOSENFUNC + '2d'
+#NWALKERS = 32
+#NSTEPS = 100
+#path = '/Users/dkossakowski/Desktop/Data/'
+#path = '/user/dkossakowski/'
+#datafil = 'sbc_f125lp.phot'
+
+
+
 
 ############### If we want to plot the before/after of applying the flat (as is as well as the normalized delta)
 #final = apply_flat(tab, mcmccoeff, SPACE_VAL)
@@ -566,8 +638,5 @@ def simple3dplotindstarsafter(tab, coeff, title = ''):
 #        '--nodriz',help='Turn off drizzle for CR clean production',action='store_true')
 #    options = parser.parse_args()
 
-
-#mcmccoeff
-#np.savetxt()
 
 
