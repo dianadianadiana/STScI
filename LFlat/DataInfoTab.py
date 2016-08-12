@@ -1,28 +1,32 @@
+"""
+RELICS Data Pipeline: catalogs made with tweak-reg.  Runs astrodrizzle setps 1-6
+for each filter set to get CR cleans, then runs tweakreg on each
+individual exposure to get catalogs.
+
+
+:Author: Diana Kossakowski
+
+:Organization: Space Telescope Science Institute
+
+:History:
+    * Aug 2016 Finished
+
+Examples
+--------
+To call from command line::
+    python make_catalogs.py
+
+"""
+# global imports
 import numpy as np
 from astropy.table import Table, Column
 import time
+import argparse
+
 start_time = time.time()
 
 CHIP1XLEN = CHIP2XLEN = 4096 
 CHIP1YLEN = CHIP2YLEN = 2048
-
-# Read in the data
-path = '/Users/dkossakowski/Desktop/Data/'
-datafil = 'wfc_f606w_r5.lflat'
-data = np.genfromtxt(path + datafil)
-
-# Create an Astropy table
-# tab[starID][0]: starID; ...[2]: chip#; ...[3]: x pixel; ...[4]: y pixel; 
-# ...[5]: magnitude; ...[6]: magnitude error; rest: dummy
-names = ['id', 'filenum', 'chip', 'x', 'y', 'mag', 'magerr', 'd1', 'd2', 'd3']
-types = [int, int, int, np.float64, np.float64, np.float64, np.float64,
-         float, float, float]
-
-tab = Table(data, names=names, dtype=types)
-tab.remove_columns(['d1','d2','d3']) # remove the dummy columns  
-tab.sort(['id'])                     # sort the table by starID
-#tab = tab[10000:20000]
-starIDarr = np.unique(tab['id'])     # collect all the star IDs
 
 #####################################################
 ################ Filter Functions ###################
@@ -66,11 +70,29 @@ def remove_stars_tab(tab, starIDarr, min_num_obs = 4):
     return tab, starIDarr, removestarlist
 
 def sigmaclip(z, low = 3, high = 3, num = 5):
+    """           
+    Purpose
+    -------
+    Applies sigma clipping to an array
     
-    # copied exactly from scipy.stats.sigmaclip with some variation to keep 
-    # account for the index(es) that is(are) being removed
-    c = np.asarray(z).ravel()   # this will be changing
-    c1 = np.copy(c)             # the very original array
+    Parameters
+    ----------
+    z:                  The array that will be sigma clipped
+    low:                The lower bound of the sigma clip (Default = 3)
+    high:               The higher bound of the sigma clip (Default = 3)
+    num:                The maximum number of times the sigma clipping will iterate
+    
+    Returns
+    -------
+    remove_arr:         An array of the indexes that have been sigmaclipped
+    
+    * So if you want to get rid of those values in z; 
+    do z = np.delete(z, remove_arr)
+    * Copied exactly from scipy.stats.sigmaclip with some variation to keep
+    account for the index(es) that is (are) being removed
+    """
+    c = np.asarray(z).ravel()           # this will be changing
+    c1 = np.copy(c)                     # the very original array
     delta = 1
     removevalues = np.array([])
     count = 0
@@ -122,14 +144,13 @@ def sigmaclip_starmagflux(tab, starIDarr, flux = True, mag = False, low = 3, hig
         starindexes = np.where(tab['id'] == star)[0]
         if mag:
             currmags = tab[starindexes]['mag']
-            remove_arr = sigmaclip(np.abs(currmags), low, high)
+            remove_arr = sigmaclip(currmags, low, high)
             removetabindicies = np.append(removetabindices, starindexes[remove_arr])
         if flux:
             currfluxes = tab[starindexes]['flux']
-            remove_arr = sigmaclip(np.abs(currfluxes), low, high)
+            remove_arr = sigmaclip(currfluxes, low, high)
             removetabindicies = np.append(removetabindices, starindexes[remove_arr])
     removetabindicies = map(int, removetabindicies)
-    
     tab.remove_rows(removetabindicies)
     return tab, starIDarr
 
@@ -250,34 +271,6 @@ def bin_filter(tab, xpixelarr, ypixelarr, xbin, ybin, low = 3, high = 3):
 
 
 #####################################################
-################# Apply Filters #####################
-#####################################################
-'''
-print 'Len of tab and starIDarr before anything'
-print len(tab)
-print len(starIDarr) 
-tab =  tab[np.where((tab['mag'] <= 25) & (tab['mag'] >= 13))[0]] # (13,25)
-print 'Len of tab after constraining the magnitudes'
-print len(tab)
-print 'Len of tab and starIDarr after 1st min_num_obs'
-tab, starIDarr, removestarlist = remove_stars_tab(tab, starIDarr, min_num_obs = 4)
-print len(tab)
-print len(starIDarr) 
-tab, starIDarr = sigmaclip_starmag(tab, starIDarr, low = 3, high = 3)
-print 'Len of tab and starIDarr after sigmaclipping each star'
-print len(tab)
-print len(starIDarr)
-tab, starIDarr, removestarlist = remove_stars_tab(tab, starIDarr, min_num_obs = 4)
-print 'Len of tab and starIDarr after 2nd min_num_obs'
-print len(tab)
-print len(starIDarr)
-'''
-#####################################################
-#####################################################
-#####################################################
-
-
-#####################################################
 ######## Find the Real Magnitude and Fluxes #########
 #####################################################
 def convertmag2flux(mag, mag0 = 25, flux0 = 1):
@@ -294,10 +287,15 @@ def make_avgmagandflux(tab, starIDarr):
     """
     Purpose
     -------
-    To create six new columns to store the average magnitude and its error; the fluxes
-    and their error; the average flux and its error. The magnitude readings are 
-    converted into fluxes and then the average flux is taken and converted to
-    magnitude to make the 'real' magnitude.
+    To create six new columns to store the 
+    (1) average magnitude               ['avgmag']
+    (2) average magnitude error         ['avgmagerr'] 
+    (3) flux                            ['flux']
+    (4) flux error                      ['fluxerr']
+    (5) average flux                    ['avgflux']
+    (6) average flux error              ['avgfluxerr']
+    The magnitude readings are converted into fluxes and then the average flux 
+    is taken and converted to magnitude to make the 'real' magnitude.
     
     Paramters
     ---------
@@ -449,6 +447,68 @@ def extract_data_dicts(starIDarr, datatab):
 
 #stardict, xdict, ydict, mdict, merrdict, absmdict, absmerrdict = extract_data_dicts(starIDarr, tab)
 
+#####################################################
+#####################################################
+#####################################################
+
+#if __name__ == '__main__':
+#
+#### Input argument parsing
+#    parser = argparse.ArgumentParser(
+#        description='Make catalogs out of HST images using astrodrizzle tools.')
+#    parser.add_argument(
+#        '--nodriz',help='Turn off drizzle for CR clean production',action='store_true')
+#    options = parser.parse_args()
+#
+#
+#    if options.nodriz:
+#        catalogging(nodriz = True)
+#    else:
+#        catalogging()
+        
+##########
+## Read in the data
+#path = '/Users/dkossakowski/Desktop/Data/'
+#datafil = 'wfc_f606w_r5.lflat'
+#data = np.genfromtxt(path + datafil)
+#
+## Create an Astropy table
+## tab[starID][0]: starID; ...[2]: chip#; ...[3]: x pixel; ...[4]: y pixel; 
+## ...[5]: magnitude; ...[6]: magnitude error; rest: dummy
+#names = ['id', 'filenum', 'chip', 'x', 'y', 'mag', 'magerr', 'd1', 'd2', 'd3']
+#types = [int, int, int, np.float64, np.float64, np.float64, np.float64,
+#         float, float, float]
+#
+#tab = Table(data, names=names, dtype=types)
+#tab.remove_columns(['d1','d2','d3']) # remove the dummy columns  
+#tab.sort(['id'])                     # sort the table by starID
+##tab = tab[10000:20000]
+#starIDarr = np.unique(tab['id'])     # collect all the star IDs
+#########
+
+#####################################################
+################# Apply Filters #####################
+#####################################################
+'''
+print 'Len of tab and starIDarr before anything'
+print len(tab)
+print len(starIDarr) 
+tab =  tab[np.where((tab['mag'] <= 25) & (tab['mag'] >= 13))[0]] # (13,25)
+print 'Len of tab after constraining the magnitudes'
+print len(tab)
+print 'Len of tab and starIDarr after 1st min_num_obs'
+tab, starIDarr, removestarlist = remove_stars_tab(tab, starIDarr, min_num_obs = 4)
+print len(tab)
+print len(starIDarr) 
+tab, starIDarr = sigmaclip_starmag(tab, starIDarr, low = 3, high = 3)
+print 'Len of tab and starIDarr after sigmaclipping each star'
+print len(tab)
+print len(starIDarr)
+tab, starIDarr, removestarlist = remove_stars_tab(tab, starIDarr, min_num_obs = 4)
+print 'Len of tab and starIDarr after 2nd min_num_obs'
+print len(tab)
+print len(starIDarr)
+'''
 #####################################################
 #####################################################
 #####################################################
