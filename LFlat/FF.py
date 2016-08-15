@@ -14,9 +14,14 @@ To call from command line::
     python FF.py
 
 """
+###########################################
+################ Imports ##################
+###########################################
 
 # Global Imports
 import numpy as np
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import scipy.optimize as op
 import warnings
@@ -39,9 +44,10 @@ from astropy.table import Table, Column
 
 # Filter
 # These functions are imported form DataInfoTab.py
-from DataInfoTab import remove_stars_tab, convertmag2flux, convertflux2mag,\
-                        make_avgmagandflux, sigmaclip_starmagflux,         \
-                        sigmaclip_delmagdelflux                                        
+from DataInfoTab import remove_stars_tab,  \
+                        sigmaclip_starmagflux, sigmaclip_delmagdelflux, \
+                        make_avgmagandflux    
+                        #make_avgflux,          
 
 # Plotting
 import corner
@@ -49,31 +55,15 @@ from mpl_toolkits.mplot3d import Axes3D
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MaxNLocator
 
-## Creating constants to keep a "standard"
-#CHIPXLEN =  CHIPYLEN = 1024.
-#
-#BIN_NUM = 2
-#XBIN = YBIN = 10. * BIN_NUM
-#XPIX = np.linspace(0,     CHIPXLEN,     XBIN)
-#YPIX = np.linspace(0,     CHIPYLEN,     YBIN)
-#
-#SCALE2ONE = True
-#SPACE_VAL = 'flux'                               # What space we are working in ('flux' or 'mag')
-#USE_F = False
-#F = 0.05
-#Norder = 1
-#Nx = Ny = Norder
-#CHOSENFUNC = 'cheb'
-#funcname = CHOSENFUNC + '2d'
-#NWALKERS = 32
-#NSTEPS = 100
-#path = '/Users/dkossakowski/Desktop/Data/'
-#path = '/user/dkossakowski/'
-#datafil = 'sbc_f125lp.phot'
+###########################################
+###########################################
+###########################################
+
 
 ###########################################
 ######### Functions to Optimize ###########
 ###########################################
+
 '''
 Note for all functions: 
    * lambdify needs to take in a list and not array; and for a 2d
@@ -81,8 +71,8 @@ Note for all functions:
      makes it just 1, which becomes a problem when trying to fit the 
      function and hence why the 0th element turns into np.ones(len(x))
 Returns for all functions:
-    funclist -- A list of the different components of the poly 
-                (elements are Symbol types) useful for printing
+    funclist -- A list of the different components of the function 
+                (elements are Symbol types) -- useful for printing
     f        -- A function made from funclist and takes in two
                 parameters, x and y
 '''
@@ -183,38 +173,37 @@ def area():
 ###########################################
 
 def do_table(fil, names, types, removenames=[]):
+    ### Assuming that we are given flux and fluxerr -- need to make avgflux and avgfluxerr
     data = np.genfromtxt(fil)
     tab = Table(data, names=names, dtype=types)
-    tab.remove_columns(removenames)
+    tab.remove_columns(removenames)             # Remove columns that are not useful
+    #tab = make_avgflux(tab)                     # Create columns for 'avgflux' and 'avgfluxerr'
     return tab
 
 ###########################################
 ###########################################
 ########################################### 
-
+  
 ###########################################
 ########## Filtering the Table ############
 ###########################################
 
-def do_filter(tab, mag_constrain = [13,19], min_num_obs = 4, flux_ratio = 5):
-    # this is assuming that tab['mag'] and tab['magerr'] exist
-    #tab.sort(['id'])                                 # sort the table by starID
+def do_filter(tab, min_num_obs = 4, flux_ratio = 5, low = 3, high = 3):
+    # this is assuming that tab only has flux values (NO magnitude)
     starIDarr = np.unique(tab['id'])                  # collect all the star IDs
     num_stars0 = np.double(len(starIDarr))
     num_obs0 = np.double(len(tab))
     print '******************************************'
     print '************** START FILTER **************'
     print '******************************************'
-    print 'Initial number of observations:\t', len(tab)                        
-    tab =  tab[np.where((tab['mag'] <= mag_constrain[1]) & (tab['mag'] >= mag_constrain[0]))[0]]   # Constrain magnitudes (13,25)
-    tab = tab[np.where(tab['magerr'] < 1.)[0]]
-    tab, starIDarr, removestarlist = remove_stars_tab(tab, starIDarr, min_num_obs)                 # Remove rows with less than min num of observations
-    tab, starIDarr = make_avgmagandflux(tab, starIDarr)                                            # Create columns ('avgmag', 'avgmagerr', 'flux', 'fluxerr', 'avgflux', 'avgfluxerr')
-    tab, starIDarr = sigmaclip_starmagflux(tab, starIDarr, flux = True, mag = False,  \
-                                            low = 3, high = 3)                                     # Sigmaclip the fluxes and/or magnitudes for each star
-    tab, starIDarr = sigmaclip_delmagdelflux(tab, starIDarr, flux = True, mag = False,\
-                                            low = 3, high = 3)                                     # Sigmaclip the delta magnitudes and/or delta fluxes
-    tab =  tab[np.where(tab['flux']/tab['fluxerr'] > flux_ratio)[0]]                               # S/N ratio for flux is greater than 5
+    print 'Initial number of observations:\t', len(tab) 
+    
+    tab = make_avgmagandflux(tab)      
+    tab =  tab[np.where(tab['flux']/tab['fluxerr'] > flux_ratio)[0]]               # S/N ratio for flux is greater than flux_ratio
+    tab, starIDarr, removestarlist = remove_stars_tab(tab, starIDarr, min_num_obs) # Remove rows with less than min num of observations
+    tab, starIDarr = sigmaclip_starmagflux(tab, starIDarr, low, high)              # Sigmaclip the fluxes for each star
+    tab, starIDarr = sigmaclip_delmagdelflux(tab, starIDarr, low, high)            # Sigmaclip the delta fluxes as a whole
+   
     print 'Number of observations after filtering:\t', len(tab)
     print 'Percent of observations kept:\t', len(tab)/num_obs0 * 100
     print 'Number of stars after filtering:\t', len(starIDarr)
@@ -257,7 +246,7 @@ def lnprior(params):
 ########## 
 def chisqstar(starrows, params, func2fit):
     starvals = starrows['flux']
-    starvalerrs = starrows['flux' + 'err']
+    starvalerrs = starrows['fluxerr']
     func = lambda p, x, y: np.sum(func2fit(x,y) * np.asarray(p)) + 1           # The 'delta' function
     if SCALE2ONE:
         fits = [func(params, (row['x']-CHIPXLEN/2)/(CHIPXLEN/2), (row['y']-CHIPYLEN/2)/(CHIPYLEN/2)) for row in starrows]
@@ -327,7 +316,7 @@ def get_pos(ndim, nwalkers, scale_factor, base_coeff):
             warnings.warn("Warning: Finding the intial MCMC walkers is taking too long")
     return pos
     
-def do_MCMC(tab, nsteps, nwalkers, scale_factor, chosenfunc, n, burnin, txtfil=''):
+def do_MCMC(tab, nsteps, nwalkers, chosenfunc, n, scale_factor, burnin, txtfil, mcmcfil):
 
     print '******************************************'
     print '*************** START MCMC ***************'
@@ -345,6 +334,7 @@ def do_MCMC(tab, nsteps, nwalkers, scale_factor, chosenfunc, n, burnin, txtfil='
     tabreduced = np.copy(tab)               
     tabreduced = Table(tabreduced)
     tabreduced.remove_columns(['avgflux','avgfluxerr'])
+    ###
     
     ### Set up the initial coefficients 
     if USE_F:
@@ -369,11 +359,12 @@ def do_MCMC(tab, nsteps, nwalkers, scale_factor, chosenfunc, n, burnin, txtfil='
         sampler.reset()
 
     if txtfil:
-        writefil = txtfil
+        writefil = txtfil 
         f = open(writefil, "w")
-        f.write('nsteps: '   + str(NSTEPS)     + '\n')
-        f.write('nwalkers: ' + str(NWALKERS)   + '\n')
-        f.write('ndim: '     + str(ndim)       + '\n')
+        f.write('#chosenfunc: ' + chosenfunc + str(n) + '\n')
+        f.write('#nsteps: '   + str(nsteps)     + '\n')
+        f.write('#nwalkers: ' + str(nwalkers)   + '\n')
+        f.write('#ndim: '     + str(ndim)       + '\n')
         f.close()
         
     for i, result in enumerate(sampler.sample(pos, iterations=nsteps, storechain=True)):
@@ -381,9 +372,13 @@ def do_MCMC(tab, nsteps, nwalkers, scale_factor, chosenfunc, n, burnin, txtfil='
         if txtfil:
             position = result[0]
             f = open(writefil, "a")
-            f.write('nstep #' + str(i) + '\n')
+            f.write('#nstep ' + str(i) + '\n')
             for k in range(position.shape[0]):
-                f.write('{0:4d} {1:s}\n'.format(k, " ".join(str(position[k]))))
+                #f.write('{0:d} {1:s}\n'.format(k, "".join(str(position[k]))))
+                for elem in position[k]:
+                    f.write(str(elem) + ' ')
+                #f.write(str(position[k]))
+                f.write('\n')
             f.close()
     samples = sampler.chain[:, :, :].reshape((-1, ndim))
     print 'Time it took to do MCMC:'
@@ -399,9 +394,6 @@ def do_MCMC(tab, nsteps, nwalkers, scale_factor, chosenfunc, n, burnin, txtfil='
     valswerrs = np.asarray(valswerrs)
     mcmccoeff = valswerrs.T[0]   
     mcmccoeff[0] += 1 # Because we defined p0 as p0-1 so we are just adding the 1 back in
-    print
-    print 'MCMC Coefficients:'
-    print mcmccoeff
     ###
     
     ###
@@ -416,7 +408,48 @@ def do_MCMC(tab, nsteps, nwalkers, scale_factor, chosenfunc, n, burnin, txtfil='
     int_resmcmc = integrate.nquad(funcintegrate, [bounds_x(), bounds_y()], args = (mcmccoeff,chosenfunc,n,))[0]  
     int_resmcmc /= area()
     mcmccoeff /= int_resmcmc
+    print
+    print 'MCMC Coefficients:'
+    print mcmccoeff
     ###
+    
+    if mcmcfil:
+        writefil = mcmcfil
+        f = open(writefil, "w")
+        f.close()
+        
+        # Make it easy to copy and paste
+        for coeff in mcmccoeff:
+            f = open(writefil, "a")
+            f.write(str(coeff)+', ')
+            f.close()
+        # Format it just down the line
+        f = open(writefil, "a")
+        f.write('\n \n')
+        f.close()
+        for coeff in mcmccoeff:
+            f = open(writefil, "a")
+            f.write(str(coeff)+'\n')
+            f.close()
+        # Include the errors  
+        f = open(writefil, "a")
+        f.write('\n \n')
+        f.close()
+        for coeff in valswerrs:
+            f = open(writefil, "a")
+            f.write(str(coeff[0]) + ' +' + str(coeff[1]) + ' -' + str(coeff[2]) + '\n')
+            f.close()
+            
+        # The function written out
+        f = open(writefil, "a")
+        f.write('\n \n')
+        f.write(chosenfunc+str(n) + '\n')
+        f.close()
+        
+        for char in func2read:
+            f = open(writefil, "a")
+            f.write(str(char)+'\n')
+            f.close()
     
     print '******************************************'
     print '**************** END MCMC ****************'
@@ -435,19 +468,36 @@ def get_samplerchain(sampler, start, end, ndim):
 ############### Plotting ##################
 ###########################################
 
-#def plotwalkerpaths(samp, num_subplots, start=0, end=NSTEPS):
-#    ''' Plot the walker paths for your choice of num_subplots '''
-#    if start < 0: start = 0
-#    
-#    fig, axes = plt.subplots(num_subplots, 1, sharex=True)#, figsize=(8, 9))
-#    for axnum in range(num_subplots):
-#        #axes[axnum].plot(samp[:,axnum].reshape(NSTEPS, NWALKERS, order='F'), color="k", alpha=.4)
-#        axes[axnum].plot(sampler.chain[:, start:end, axnum].T, color="k", alpha=0.4)
-#        axes[axnum].yaxis.set_major_locator(MaxNLocator(5))
-#        axes[axnum].set_ylabel('Coeff #' + str(axnum))
-#        axes[axnum].set_xticklabels(np.arange(start,end+1,10))
-#    fig.tight_layout(h_pad=0.0)
-#    return fig
+def plotwalkerpaths(samp, num_subplots, end, start=0):
+    ''' Plot the walker paths for your choice of num_subplots '''
+    if start < 0: start = 0
+    
+    fig, axes = plt.subplots(num_subplots, 1, sharex=True)#, figsize=(8, 9))
+    for axnum in range(num_subplots):
+        #axes[axnum].plot(samp[:,axnum].reshape(NSTEPS, NWALKERS, order='F'), color="k", alpha=.4)
+        axes[axnum].plot(sampler.chain[:, start:end, axnum].T, color="k", alpha=0.4)
+        axes[axnum].yaxis.set_major_locator(MaxNLocator(5))
+        axes[axnum].set_ylabel('Coeff #' + str(axnum))
+        axes[axnum].set_xticklabels(np.arange(start,end+1,10))
+    fig.tight_layout(h_pad=0.0)
+    return fig
+
+def plotwalkerpathsmult(sampler, savefigloc, chosenfunc, n):
+    func2read, func2fit = get_function(chosenfunc, n)
+    num_plots = len(func2read)/4 + 1 if len(func2read)%4 != 0 else len(func2read)/4 
+    for index, i in enumerate(np.arange(num_plots)*4):
+        start = i
+        end = i+4 
+        if end > len(func2read):
+            end = len(func2read)
+        fig, axes = plt.subplots(4, 1, sharex=True)
+        
+        for axnum, coeffnum in zip(range(end-start), np.arange(start,end)):
+            axes[axnum].plot(sampler.chain[:, :, coeffnum].T, color="k", alpha=0.4)
+            axes[axnum].yaxis.set_major_locator(MaxNLocator(5))
+            #axes[axnum].set_ylabel("$0$")
+        fig.tight_layout(h_pad=0.0)
+        fig.savefig(savefigloc + 'walkerpath' + str(index+1) + '.png', dpi = 500)
 
 def plottriangle(samp):
     fig = corner.corner(samp)
@@ -463,7 +513,31 @@ def plotmesh(a, title = ''):
     plt.legend()
     return fig
 
-finalfunc = lambda p, x, y: np.sum(func2fit(x,y) * np.asarray(p))     # The final flat
+#finalfunc = lambda p, x, y: np.sum(func2fit(x,y) * np.asarray(p))     # The final flat
+
+def plotimg(img, title = '', fitplot = False):
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+    ax.set_title(title)
+    ax.set_xlabel('X Pixel', fontsize = 18);  ax.set_ylabel('Y Pixel', fontsize = 18)
+    extent = (0, CHIPXLEN, 0, CHIPYLEN)    
+
+    if fitplot:
+        scale = np.max([np.max(img) - 1, 1 - np.min(img)])
+        vmin = 1 - scale
+        vmax = 1 + scale
+    else:
+        vmin = np.min(img)
+        vmax = np.max(img)
+    cax = ax.imshow(np.double(img), cmap = 'viridis', interpolation='nearest', \
+                                    origin='lower', extent=extent, vmin=vmin, vmax=vmax)
+    if fitplot:
+        c = np.linspace(1 - scale, 1 + scale, num = 9)
+        cbar = fig.colorbar(cax, fraction=0.046, pad=0.04, ticks = c)
+        cbar.ax.set_yticklabels(c)  # vertically oriented colorbar
+    else:
+        fig.colorbar(cax, fraction=0.046, pad=0.04)
+    return fig
 
 def apply_flat(rows, coeff, somethingchar):
     final = np.array([])
@@ -508,9 +582,9 @@ if __name__ == '__main__':
     
     # Constants
     parser.add_argument("--chiplen", default=1024,
-                        help="The length of the chip: Default = 1048")
+                        help="The length of the chip: Default = 1024")
     parser.add_argument("--bin", default=20,
-                        help="The bin number; used for plotting the meshgrid: Default = 1048")
+                        help="The bin number; used for plotting the meshgrid: Default = 20")
     parser.add_argument("--usef", default=0.0, 
                         help="Input F if want to use the fudge factor: Default = 0.0: Should be between 0 and 1")
     
@@ -523,25 +597,27 @@ if __name__ == '__main__':
                         help="True if scaling from -1 to 1 (Preferred): Default = True")
     
     # Table arguments
+    parser.add_argument("--datafile", 
+                        help="The location of the datafile")  # PROBABLY SHOULD NOT BE OPTIONAL
     parser.add_argument("--names", default=['id', 'filenum', 'chip', 'x', 'y', 'mag', 'magerr'],
-                        help="The names for the table")
+                        help="The names for the table -- Need to have 'id' 'x' 'y' 'flux' 'fluxerr'")
     parser.add_argument("--types", default=[int, int, int, np.float64, np.float64, np.float64, np.float64],
                         help="The types for the table")
     parser.add_argument("--remnames", default=['filenum', 'chip'],
                         help="The names to remove from the table")
-    parser.add_argument("--datafile", 
-                        help="The location of the datafile")
                         
     # Filter Table aruments
-    parser.add_argument("--mag_constrain", default=[13,19],
-                        help="The constraints for the magnitude: Default = [13,19]")
     parser.add_argument("--min_num_obs", type=int, default=4, choices=range(10),
                         help="The minimum number of observations required for each star: Default = 4")
     parser.add_argument("--flux_ratio", type=int, default=5, 
                         help="The minimum flux signal to noise for an observation: Default = 5")
+    parser.add_argument("--low", type=np.double, default=3.0,
+                        help="The lower limit for the sigma clipping when filtering the table")
+    parser.add_argument("--high", type=np.double, default=3.0,
+                        help="The upper limit for the sigma clipping when filtering the table")
                         
     # MCMC arguments
-    parser.add_argument("--n", type=int, choices=[0,1,2,3,4,5,6,7], default=1,
+    parser.add_argument("--n", type=int, choices=range(8), default=1,
                         help="The nth order of the fit: Default = 1")
     parser.add_argument("--chosenfunc", type=str, choices=["poly", "cheb", "leg"], default="cheb",
                         help="The functional form: Default = 'cheb'")
@@ -553,7 +629,14 @@ if __name__ == '__main__':
                         help="The shape of the initial tiny gaussian balls: Default = 1e-1")
     parser.add_argument("--burnin", type=int, default=0,
                         help="The number of steps MCMC should do and then start from there SOMETHING SOMETHING: Default = 0")    
-
+    
+    # Saving Data arguments
+    parser.add_argument("--filmcmc", default ='',
+                        help="Name of file to save the MCMC coefficients")
+    parser.add_argument("--filcoeff", default = '',
+                        help="Name of file to save the locations of each walker from each step")
+    parser.add_argument("--figpath", default = '',
+                        help="The path of where the figures will be saved")           
     args = parser.parse_args()
         
     #names = ['id', 'filenum', 'chip', 'x', 'y', 'mag', 'magerr']
@@ -564,12 +647,12 @@ if __name__ == '__main__':
     #table = do_filter(table)
     #sampler, samples, vaslwerrs, mcmccoeff, f, ndim = do_MCMC(table, nsteps, nwalkers, scale_factor=1e-1, chosenfunc=CHOSENFUNC, n=Norder, burnin=0)
 
-
     CHIPXLEN = CHIPYLEN = args.chiplen
     XBIN = YBIN = args.bin
-    XPIX = np.linspace(0,     CHIPXLEN,     XBIN)
-    YPIX = np.linspace(0,     CHIPYLEN,     YBIN)
+    XPIX = np.linspace(0, CHIPXLEN, XBIN)
+    YPIX = np.linspace(0, CHIPYLEN, YBIN)
     SCALE2ONE = args.scale2one
+    
     if args.usef:
         F = args.usef
         USE_F = True
@@ -577,40 +660,41 @@ if __name__ == '__main__':
         USE_F = False
     
     table = do_table(fil=args.datafile, names=args.names, types=args.types, removenames=args.remnames)
-    
+
     if args.filtertable:
-        table = do_filter(table, mag_constrain = args.mag_constrain, min_num_obs = args.min_num_obs, flux_ratio = args.flux_ratio)
+        table = do_filter(table,                        \
+                        min_num_obs=args.min_num_obs,   \
+                        flux_ratio=args.flux_ratio,     \
+                        low=args.low, high=args.high)
     
     if args.mcmc:
-        sampler, samples, vaslwerrs, mcmccoeff, f, ndim = do_MCMC(table, nsteps=args.nsteps, nwalkers=args.nwalkers,\
-                            scale_factor=args.scale_factor, chosenfunc=args.chosenfunc, n=args.n, burnin=args.burnin)
+        sampler, samples, vaslwerrs, mcmccoeff, f, ndim = do_MCMC(table, 
+                        nsteps=args.nsteps, nwalkers=args.nwalkers,         \
+                        chosenfunc=args.chosenfunc, n=args.n,               \
+                        scale_factor=args.scale_factor, burnin=args.burnin, \
+                        txtfil=args.filcoeff, mcmcfil=args.filmcmc)
+        if args.figpath:
+            func2fit = get_function(args.chosenfunc, args.n)[1]
+            
 
-        plt.show(plotwalkerpaths(samples, len(mcmccoeff)))
-        plt.show(plottriangle(samples))
-        plt.show(plotmesh(convert2mesh(get_function(args.chosenfunc, args.n)[1], coeff=mcmccoeff, xpixel=XPIX, ypixel=YPIX), title = 'MCMC: ' + str(args.chosenfunc) + ' n = ' + str(args.n)))
-    
-# Creating constants to keep a "standard"
-#CHIPXLEN =  CHIPYLEN = 1024.
-
-#BIN_NUM = 2
-#XBIN = YBIN = 10. * BIN_NUM
-#XPIX = np.linspace(0,     CHIPXLEN,     XBIN)
-#YPIX = np.linspace(0,     CHIPYLEN,     YBIN)
-
-#SCALE2ONE = True
-#SPACE_VAL = 'flux'                               # What space we are working in ('flux' or 'mag')
-#USE_F = False
-#F = 0.05
-#Norder = 1
-#Nx = Ny = Norder
-#CHOSENFUNC = 'cheb'
-#funcname = CHOSENFUNC + '2d'
-#NWALKERS = 32
-#NSTEPS = 100
-#path = '/Users/dkossakowski/Desktop/Data/'
-#path = '/user/dkossakowski/'
-#datafil = 'sbc_f125lp.phot'
-
+            #plotwalkerpaths(samples, len(mcmccoeff),end=args.nsteps).savefig(args.figpath + 'walker.png', dpi=500)
+            plottriangle(samples).savefig(args.figpath+'triangle.png', dpi=700)
+            plotmesh(convert2mesh(func2fit, coeff=mcmccoeff, \
+                                    xpixel=XPIX, ypixel=YPIX), \
+                    title = 'MCMC: ' + str(args.chosenfunc) + ' n = ' + str(args.n)).savefig(args.figpath+'meshgrid.png',dpi=500)
+            plotwalkerpathsmult(sampler, args.figpath, args.chosenfunc, args.n)
+            
+            zzfitmcmc = convert2mesh(func2fit, coeff=mcmccoeff, xpixel=np.double(range(int(CHIPXLEN))), ypixel=np.double(range(int(CHIPYLEN))))[2]      # convert2mesh returns [xx, yy, zzfit]
+            imgmcmc = plotimg(zzfitmcmc, title = 'MCMC: ' + args.chosenfunc + ' n = ' + str(args.n), fitplot = True)
+            imgmcmc.savefig(args.figpath+'Lflat.png', dpi=500)
+            
+            print 'New files:'
+            print args.figpath + 'walker*.png' + ' : The paths of the walkers'
+            print args.figpath + 'triangle.png' + ' : The triangle plot'
+            print args.figpath + 'meshgrid.png' + ' : The meshgrid of the Lflat'
+            print args.figpath + 'Lflat.png' + ' : The Lflat (imshow)'
+            
+            
 
 
 
@@ -621,15 +705,48 @@ if __name__ == '__main__':
 
 
 
-
+############### If we want to read in all the locations of the walkers for each step and just plot chi evolution
+#def get_chisqall(fil, nwalkers, nsteps, ndim, chosenfunc, n):
+#    #fil = '/Users/dkossakowski/Desktop/trash/testcheb1.txt'
+#    data = np.genfromtxt(fil)
+#    data = data.reshape(nwalkers, nsteps, ndim, order='F')
+#    func2read, func2fit = get_function(chosenfunc, n)
+#    chisqall = []
+#    for walker in range(nwalkers):
+#        print 'walker ', walker
+#        chisqwalker = []
+#        for step in range(nsteps):
+#            currparams = data[walker][step]
+#            currchisq = lnlike(currparams, tab, func2fit) * -2.
+#            chisqwalker = chisqwalker + [currchisq]
+#        chisqall.append(chisqwalker)  
+#    return chisqall  
+#    
+#def plot_chisqall(cmap, fil, nwalkers, nsteps, ndim, chosenfunc, n):
+#    chisqall = get_chisqall(fil, nwalkers, nsteps, ndim, chosenfunc, n)
+#    fig = plt.figure()
+#    cmap = plt.get_cmap(cmap)
+#    colors = [cmap(i) for i in np.linspace(0, 1, len(chisqall))]
+#    for elem, col in zip(chisqall, colors):
+#        plt.scatter(range(len(elem)), elem, c = col, lw = .5)
+#    return fig
+#cmap = 'jet'
+#fil = '/Users/dkossakowski/Desktop/trash/testcheb1.txt'
+#nwalkers = 10
+#nsteps = 100
+#ndim = 4
+#chosenfunc = 'cheb'
+#n = 1
+#plt.show(plot_chisqall(cmap, fil, nwalkers, nsteps, ndim, chosenfunc, n))  
+###############
 
 
 ############### If we want to plot the before/after of applying the flat (as is as well as the normalized delta)
 #final = apply_flat(tab, mcmccoeff, 'flux')
-#simple3dplot(tab, tab['flux'], title = 'Before LFlat, just ' + 'flux' + ' values plotted')
-#simple3dplot(tab, final, title = 'After LFlat, just ' + 'flux' + ' values plotted')
-#simple3dplot(tab, (tab['flux'] - tab['avg'+'flux'])/ tab['avg'+'flux'], title = 'Before LFlat, normalized delta ' + 'flux')
-#simple3dplot(tab, (final - tab['avg'+'flux'])/tab['avg'+'flux'], title = 'After LFlat, normalized delta ' + 'flux') # Not QUITE right because there is a new mean
+#simple3dplot(tab, tab['flux'], title = 'Before LFlat, just flux values plotted')
+#simple3dplot(tab, final, title = 'After LFlat, just flux values plotted')
+#simple3dplot(tab, (tab['flux'] - tab['avgflux'])/ tab['avgflux'], title = 'Before LFlat, normalized delta flux')
+#simple3dplot(tab, (final - tab['avgflux'])/tab['avgflux'], title = 'After LFlat, normalized delta flux') # Not QUITE right because there is a new mean
 ###############
 
 ############### If we want to see/plot the mean of each star before and after applying the flat
@@ -680,14 +797,33 @@ if __name__ == '__main__':
 #    plotnumobsGIF(num=i, cmap='jet').savefig('/Users/dkossakowski/Desktop/FinalPresentation/DitheringGIF/Stars/NumObs' + str(i) + '.png', dpi = 500)
 ############### 
 
-#if __name__ == '__main__':
+
+############### If we want to plot the images
+#def plotimg(img, title = '', fitplot = False):
+#    fig = plt.figure()
+#    ax = fig.add_subplot(111)
+#    ax.set_title(title)
+#    ax.set_xlabel('X Pixel', fontsize = 18);  ax.set_ylabel('Y Pixel', fontsize = 18)
+#    extent = (0, CHIPXLEN, 0, CHIPYLEN)    
 #
-#### Input argument parsing
-#    parser = argparse.ArgumentParser(
-#        description='Make catalogs out of HST images using astrodrizzle tools.')
-#    parser.add_argument(
-#        '--nodriz',help='Turn off drizzle for CR clean production',action='store_true')
-#    options = parser.parse_args()
-
-
-
+#    if fitplot:
+#        scale = np.max([np.max(img) - 1, 1 - np.min(img)])
+#        vmin = 1 - scale
+#        vmax = 1 + scale
+#    else:
+#        vmin = np.min(img)
+#        vmax = np.max(img)
+#    cax = ax.imshow(np.double(img), cmap = 'viridis', interpolation='nearest', \
+#                                    origin='lower', extent=extent, vmin=vmin, vmax=vmax)
+#    if fitplot:
+#        c = np.linspace(1 - scale, 1 + scale, num = 9)
+#        cbar = fig.colorbar(cax, fraction=0.046, pad=0.04, ticks = c)
+#        cbar.ax.set_yticklabels(c)  # vertically oriented colorbar
+#    else:
+#        fig.colorbar(cax, fraction=0.046, pad=0.04)
+#    return fig
+#    
+#zzfitmcmc = convert2mesh(func2fit, coeff=mcmccoeff, xpixel = np.double(range(int(CHIPXLEN))), ypixel = np.double(range(int(CHIPYLEN))))[2]      # convert2mesh returns [xx, yy, zzfit]
+#imgmcmc = plotimg(zzfitmcmc, title = 'MCMC: ' + str(funcname) + ' n = ' + str(n), fitplot = True)
+#plt.show(imgmcmc)
+############### 
