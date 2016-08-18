@@ -1,27 +1,7 @@
-"""
-RELICS Data Pipeline: catalogs made with tweak-reg.  Runs astrodrizzle setps 1-6
-for each filter set to get CR cleans, then runs tweakreg on each
-individual exposure to get catalogs.
-
-
-:Author: Diana Kossakowski
-
-:Organization: Space Telescope Science Institute
-
-:History:
-    * Aug 2016 Finished
-
-Examples
---------
-To call from command line::
-    python make_catalogs.py
-
-"""
 # global imports
 import numpy as np
 from astropy.table import Table, Column
 import time
-import argparse
 
 start_time = time.time()
 
@@ -68,6 +48,28 @@ def remove_stars_tab(tab, starIDarr, min_num_obs = 4):
     removetabindicies = map(int, removetabindicies) # need to make removing indicies ints 
     tab.remove_rows(removetabindicies)
     return tab, starIDarr, removestarlist
+
+def remove_certain_star(tab, star_names):
+    '''           *** Filter function ***
+    Purpose
+    -------
+    Remove any stars in star_names from tab
+    
+    Parameters
+    ----------
+    tab:                The Astropy table with all the information
+    star_names:         The list or array of the star names to remove
+    
+    Return
+    ------
+    tab:                The filtered table after deleteing the stars in star_names
+    '''
+    removetabindicies = np.array([])
+    for removestar in star_names:
+        removetabindicies = np.append(removetabindicies, np.where(tab['id'] == removestar)[0])
+    removetabindicies = map(int, removetabindicies) # need to make removing indicies ints 
+    tab.remove_rows(removetabindicies)
+    return tab
 
 def sigmaclip(z, low = 3, high = 3, num = 5):
     """           
@@ -283,7 +285,27 @@ def convertflux2mag(flux, mag0 = 25, flux0 = 1):
     -- assume zero-point mag is 0 and flux is a constant ''' 
     return mag0 - 2.5 * np.log10(flux/flux0)
     
-def make_avgmagandflux(tab, starIDarr):
+def make_avgflux(tab):
+    # Create new columns for average flux and average flux error
+    filler = np.arange(len(tab))
+    c1 = Column(data = filler, name = 'avgflux',       dtype = np.float64)
+    c2 = Column(data = filler, name = 'avgfluxerr',    dtype = np.float64)
+    tab.add_column(c1)
+    tab.add_column(c2)
+    
+    starIDarr = np.unique(tab['id'])
+    for star in starIDarr:
+        starindexes = np.where(tab['id'] == star)[0]    # the indexes in the tab of where the star is
+        currfluxes = tab[starindexes]['flux']           # the current fluxes (type = class <'astropy.table.column.Column'>)
+        currfluxerr = tab[starindexes]['fluxerr']       # the current flux errors (type = class <'astropy.table.column.Column'>)
+        avgerror = lambda errarr: np.sqrt(np.sum(errarr**2)) / len(errarr)
+        avgfluxerr = avgerror(currfluxerr)
+        for i, index in enumerate(starindexes):         # input the average flux and its error
+            tab[index]['avgflux'] = np.mean(currfluxes)
+            tab[index]['avgfluxerr'] = avgfluxerr
+    return tab
+    
+def make_avgmagandflux(tab):
     """
     Purpose
     -------
@@ -300,7 +322,6 @@ def make_avgmagandflux(tab, starIDarr):
     Paramters
     ---------
     tab:                The Astropy table with all the information
-    starIDarr:          The array of unique star IDs in the table
         
     Returns
     -------
@@ -328,6 +349,7 @@ def make_avgmagandflux(tab, starIDarr):
     tab.add_column(c5)
     tab.add_column(c6)
     
+    starIDarr = np.unique(tab['id'])
     for star in starIDarr:
         starindexes = np.where(tab['id'] == star)[0]    # the indexes in the tab of where the star is
         currmags = np.array(tab[starindexes]['mag'])    # the current magnitudes 
@@ -349,10 +371,10 @@ def make_avgmagandflux(tab, starIDarr):
             tab[index]['avgflux'] = np.mean(currfluxes)
             tab[index]['avgfluxerr'] = avgfluxerr
     
-    return tab, starIDarr
+    return tab
     
 '''
-tab, starIDarr = make_avgmagandflux(tab, starIDarr)
+tab = make_avgmagandflux(tab)
 tab =  tab[np.where(tab['flux']/tab['fluxerr'] > 5)[0]] # S/N ratio for flux is greater than 5
 tab, starIDarr = sigmaclip_delmagall(tab, starIDarr, low = 3, high = 3)
 print 'Len of tab and starIDarr after sigmaclipping delta magnitudes'
@@ -450,22 +472,7 @@ def extract_data_dicts(starIDarr, datatab):
 #####################################################
 #####################################################
 #####################################################
-
-#if __name__ == '__main__':
-#
-#### Input argument parsing
-#    parser = argparse.ArgumentParser(
-#        description='Make catalogs out of HST images using astrodrizzle tools.')
-#    parser.add_argument(
-#        '--nodriz',help='Turn off drizzle for CR clean production',action='store_true')
-#    options = parser.parse_args()
-#
-#
-#    if options.nodriz:
-#        catalogging(nodriz = True)
-#    else:
-#        catalogging()
-        
+   
 ##########
 ## Read in the data
 #path = '/Users/dkossakowski/Desktop/Data/'
