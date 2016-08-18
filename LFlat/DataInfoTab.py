@@ -11,7 +11,7 @@ CHIP1YLEN = CHIP2YLEN = 2048
 #####################################################
 ################ Filter Functions ###################
 #####################################################
-def remove_stars_tab(tab, starIDarr, min_num_obs = 4):
+def remove_stars_tab(tab, min_num_obs = 4):
     """            *** Filter function ***
     Purpose
     -------
@@ -34,20 +34,14 @@ def remove_stars_tab(tab, starIDarr, min_num_obs = 4):
                         have enough observations -- returned just in case we want
                         to know how many were filtered out
     """
-    # get an index list of the stars to remove in starIDarr
-    removestarindexlist = [i for i in range(len(starIDarr)) if len(np.where(tab['id'] == starIDarr[i])[0]) < min_num_obs]
-    # get a name list of the stars to remove (to use for the table)
-    removestarlist = [star for star in starIDarr[removestarindexlist]]
-    # remove the stars from the starIDarr 
-    starIDarr = np.delete(starIDarr, removestarindexlist)
-    #removetabindicies = np.asarray([np.where(tab['id'] == removestar)[0] for removestar in removestarlist])
-    # had to do everything below since the above statement wouldn't unravel nicely..
+    starIDarr = np.unique(tab['id'])
+    removestarlist = [star for star in starIDarr if len(np.where(tab['id'] == star)[0]) < min_num_obs] # Get a list of the stars to remove
     removetabindicies = np.array([])
     for removestar in removestarlist:
         removetabindicies = np.append(removetabindicies, np.where(tab['id'] == removestar)[0])
     removetabindicies = map(int, removetabindicies) # need to make removing indicies ints 
     tab.remove_rows(removetabindicies)
-    return tab, starIDarr, removestarlist
+    return tab
 
 def remove_certain_star(tab, star_names):
     '''           *** Filter function ***
@@ -117,80 +111,59 @@ def sigmaclip(z, low = 3, high = 3, num = 5):
     remove_arr = map(int, remove_arr)
     return remove_arr
 
-def sigmaclip_starmagflux(tab, starIDarr, flux = True, mag = False, low = 3, high = 3):
+def sigmaclip_starflux(tab, low = 3, high = 3):
     """
     Purpose
     -------
     To remove any observations for each star that are not within a low sigma 
-    and high simga (Ex. a star has mag values [24,24.5,25,25,25,50] --> the 
+    and high simga (Ex. a star has flux values [24,24.5,25,25,25,50] --> the 
     observation with 50 will be removed from the table
     
     Paramters
     ---------
     tab:                The Astropy table with all the information
-    starIDarr:          The array of unique star IDs in the table
-    flux:               Boolean: True if we want to sigmaclip flux (Default is True)
-    mag:                Boolean: True if we want to sigmaclip mag  (Default is False)
     low:                The bottom cutoff (low sigma); default is 3
     high:               The top cutoff (high sigma); default is 3
         
     Returns
     -------
     tab:                The updated Astropy table with obscure observations removed
-    starIDarr:          The array with all the star IDs; should not be modified
-                        but returned for consistency
     """
     
     removetabindices = np.array([])
+    starIDarr = np.unique(tab['id'])
     for star in starIDarr:
         starindexes = np.where(tab['id'] == star)[0]
-        if mag:
-            currmags = tab[starindexes]['mag']
-            remove_arr = sigmaclip(currmags, low, high)
-            removetabindicies = np.append(removetabindices, starindexes[remove_arr])
-        if flux:
-            currfluxes = tab[starindexes]['flux']
-            remove_arr = sigmaclip(currfluxes, low, high)
-            removetabindicies = np.append(removetabindices, starindexes[remove_arr])
+        currfluxes = tab[starindexes]['flux']
+        remove_arr = sigmaclip(currfluxes, low, high)
+        removetabindicies = np.append(removetabindices, starindexes[remove_arr])
     removetabindicies = map(int, removetabindicies)
     tab.remove_rows(removetabindicies)
-    return tab, starIDarr
+    return tab
 
-def sigmaclip_delmagdelflux(tab, starIDarr, flux = True, mag = False, low = 3, high = 3):
+def sigmaclip_delflux(tab, low = 3, high = 3):
     '''
     Purpose
     -------
-    To remove any observations in the data set as a whole whose delta magnitude 
-    and/or delta flux is not within a certain sigma
+    To remove any observations in the data set as a whole whose delta flux is 
+    not within a certain sigma
     
     Paramters
     ---------
     tab:                The Astropy table with all the information
-    starIDarr:          The array of unique star IDs in the table [not used] 
-    flux:               Boolean: True if we want to sigmaclip flux (Default is True)
-    mag:                Boolean: True if we want to sigmaclip mag  (Default is False)
     low:                The bottom cutoff (low sigma); default is 3
     high:               The top cutoff (high sigma); default is 3
         
     Returns
     -------
     tab:                The updated Astropy table with obscure observations removed
-    starIDarr:          The array with all the star IDs; should not be modified
-                        but returned for consistency
     '''
-    if flux:
-        delfarr = (tab['flux'] - tab['avgflux']) / tab['avgflux']   # normalized flux
-        delfarr = np.asarray(delfarr)
-        # sigma clipping the delta fluxes
-        remove_arr = sigmaclip(delfarr, low, high)
-        tab.remove_rows(remove_arr)
-    if mag:
-        delmarr = (tab['mag'] - tab['avgmag']) / tab['avgmag']      # normalized mag
-        delmarr = np.asarray(delmarr)
-        # sigma clipping the delta magnitudes
-        remove_arr = sigmaclip(delmarr, low, high)
-        tab.remove_rows(remove_arr)
-    return tab, starIDarr
+    delfarr = (tab['flux'] - tab['avgflux']) / tab['avgflux']   # normalized flux
+    delfarr = np.asarray(delfarr)
+    # sigma clipping the delta fluxes
+    remove_arr = sigmaclip(delfarr, low, high)
+    tab.remove_rows(remove_arr)
+    return tab
     
 def bin_filter(tab, xpixelarr, ypixelarr, xbin, ybin, low = 3, high = 3):
     '''
@@ -215,9 +188,9 @@ def bin_filter(tab, xpixelarr, ypixelarr, xbin, ybin, low = 3, high = 3):
     zz:                 2D array of size xbin * ybin -- the final one -- where the 
                         averages of each bin are taken, and if there was nothing in 
                         a bin, the average is set to 0
-    zzdelm:             2D array of size xbin * ybin -- in each bin, there 
-                        is an array of the delta magnitudes -- this is returned 
-                        in case we want to see the values of delta mag in a bin
+    zzdel:             2D array of size xbin * ybin -- in each bin, there 
+                        is an array of the delta fluxes -- this is returned 
+                        in case we want to see the values of delta flux in a bin
     zztabindex:         2D array of size xbin * ybin -- in each bin, there 
                         is an array of the indexes that correspond to tab (equals
                         None if no array) -- this is returned in case we want 
@@ -229,7 +202,7 @@ def bin_filter(tab, xpixelarr, ypixelarr, xbin, ybin, low = 3, high = 3):
     # Find dx and dy to help later with binning x+dx and y+dy
     # zz is a 2D array that can be used for imshow
     zz = np.array([np.array([None for i in range(np.int(xbin))]) for j in range(np.int(ybin))])
-    zzdelm = np.copy(zz)
+    zzdel = np.copy(zz)
     zztabindex = np.copy(zz)
     xbin, ybin = np.double(xbin), np.double(ybin)
     xbinarr = np.linspace(np.min(xpixelarr), np.max(xpixelarr), xbin, endpoint = False)
@@ -239,7 +212,7 @@ def bin_filter(tab, xpixelarr, ypixelarr, xbin, ybin, low = 3, high = 3):
     # Take out all the information from the table
     xall = tab['x']
     yall = [row['y'] if row['chip'] == 2 else row['y'] + CHIP2YLEN for row in tab]
-    delmall = (tab['mag'] - tab['avgmag']) / tab['avgmag'] # normalized
+    delmall = (tab['flux'] - tab['avgflux']) / tab['avgflux'] # normalized
     xall = np.asarray(xall)
     yall = np.asarray(yall)
     delmall = np.asarray(delmall)
@@ -254,19 +227,19 @@ def bin_filter(tab, xpixelarr, ypixelarr, xbin, ybin, low = 3, high = 3):
                 #   remove_arr may be [0], so we add index 1100 to indextoremove
                 #   and update inbin so that it's only [1101, 1105]
                 # zztabindex will take in inbin
-                # zzdelm will take in the delta mags corresponding from tab[inbin]
-                # zz will take the mean of the delta mags
+                # zzdel will take in the delta fluxes corresponding from tab[inbin]
+                # zz will take the mean of the delta fluxes
                 remove_arr = sigmaclip(delmall[inbin], low, high)
                 indextoremove = np.append(indexestoremove, inbin[remove_arr])
                 inbin = np.delete(inbin, remove_arr)
                 zztabindex[i][j] = inbin
-                zzdelm = delmall[inbin]
+                zzdel = delmall[inbin]
                 zz[i][j] = np.mean(delmall[inbin])
             else:
                 zz[i][j] = 0
     indextoremove = map(int, indexestoremove)
     tab.remove_rows(indextoremove)
-    return [tab, zz, zzdelm, zztabindex]
+    return [tab, zz, zzdel, zztabindex]
 #####################################################
 #####################################################
 #####################################################
@@ -326,8 +299,7 @@ def make_avgmagandflux(tab):
     Returns
     -------
     tab:                The updated Astropy table
-    starIDarr:          The array with all the star IDs; should not be modified
-                        but returned for consistency
+
     Notes
     -----
     1) Average magnitude is the converted magnitude of the average flux
@@ -383,7 +355,7 @@ print len(starIDarr)
 # Don't really need to do a bin filter as below
 #xpixelarr, ypixelarr = np.arange(CHIP1XLEN), np.arange(CHIP1YLEN + CHIP2YLEN)
 #xbin, ybin = 10, 10 
-#tab, zz, zzdelm, zztabindex = bin_filter(tab, xpixelarr, ypixelarr, xbin, ybin, low=3, high=3)
+#tab, zz, zzdel, zztabindex = bin_filter(tab, xpixelarr, ypixelarr, xbin, ybin, low=3, high=3)
 print "%s seconds for filtering the data" % (time.time() - start_time) # For everything to run ~ 111 seconds
 '''
 
