@@ -11,6 +11,11 @@ XPIX = np.linspace(0,     CHIPXLEN,     XBIN)
 YPIX = np.linspace(0,     CHIPYLEN,     YBIN)
 
 SPACE_VAL = 'flux'                               # What space we are working in ('flux' or 'mag')
+SCALE2ONE = False
+n = 4
+nx = ny = n
+chosenfunc = 'cheb'
+funcname = chosenfunc + '2d'
 
 ###########################################
 ######### Functions to Optimize ###########
@@ -21,6 +26,11 @@ Note for all functions:
      polynomial, the constant term needs to be 1 + 0*x but lambdify
      makes it just 1, which becomes a problem when trying to fit the 
      function and hence why the 0th element turns into np.ones(len(x))
+Returns for all the functions:
+    funclist -- A list of the different components of the poly 
+                (elements are Symbol types) useful for printing
+    f        -- A function made from funclist and takes in two
+                parameters, x and y
 '''
 from sympy import * 
 def norder2dpoly(n):
@@ -29,12 +39,6 @@ def norder2dpoly(n):
         -------
         Create the 2D nth order polynomial
         
-        Returns
-        -------
-            funclist -- A list of the different components of the poly 
-                            (elements are Symbol types) useful for printing
-            f        -- A function made from funclist and takes in two
-                            parameters, x and y
         How it works:
             a 2nd order can be grouped like: 1; x1y0 x0y1; x2y0 x1y1 x0y2
             (where x0 = x**0, x1 = x**1 and so on)
@@ -65,13 +69,6 @@ def norder2dcheb(nx, ny):
         -------
         Create the 2D nx th and ny th order Chebyshev polynomial using
         numpy.polynomial.chebyshev.chebvander2d(x, y, [nx, ny])
-        
-        Returns
-        -------
-            funclist -- A list of the different components of the poly 
-                            (elements are Symbol types) useful for printing
-            f        -- A function made from funclist and takes in two
-                            parameters, x and y
     '''
     x = Symbol('x')
     y = Symbol('y')
@@ -88,13 +85,6 @@ def norder2dlegendre(nx, ny):
         -------
         Create the 2D nx th and ny th order Legendre polynomial using
         numpy.polynomial.legendre.legvander2d(x, y, [nx, ny])
-        
-        Returns
-        -------
-            funclist -- A list of the different components of the poly 
-                            (elements are Symbol types) useful for printing
-            f        -- A function made from funclist and takes in two
-                            parameters, x and y
     '''
     x = Symbol('x')
     y = Symbol('y')
@@ -141,28 +131,11 @@ types = [int, int, int, np.float64, np.float64, np.float64, np.float64]
 tab = Table(data, names=names, dtype=types)
 tab.remove_columns(['filenum', 'chip'])
 tab = tab[np.where(tab['magerr'] < 1.)[0]]
-#tab = tab[np.where(tab['x'] <= 950)[0]]
-#tab = tab[np.where(tab['x'] >= 100)[0]]
-#tab = tab[np.where(tab['y'] <= 950)[0]]
-#tab = tab[np.where(tab['x'] >= 100)[0]]
 ############
 #chosen = np.random.choice(len(tab), 4000, replace = False)
 #tab = tab[chosen]
 tab.sort(['id'])                                 # sort the table by starID
 starIDarr = np.unique(tab['id'])                 # collect all the star IDs
-
-############ Read in NEW data :: comment/uncomment this snippet
-#datafil = 'realistic2.dat'
-#data = np.genfromtxt(path+datafil)
-#names = ['id', 'chip', 'x', 'y', 'mag', 'magerr']
-#types = [int, int, np.float64, np.float64, np.float64, np.float64]
-#
-#tab = Table(data, names = names, dtype = types)
-#tab.remove_row(0)
-#chosen = np.random.choice(len(tab), 300, replace = False)
-#tab = tab[chosen]
-#starIDarr = np.unique(tab['id'])     # collect all the star IDs
-############
 
 ###########################################
 ###########################################
@@ -194,16 +167,14 @@ lenstar0 = len(starIDarr)
 ###########################################
 ###########################################
 
-n = 4
-func2read, func2fit = norder2dpoly(n)             # nth order 2d Polynomial
+if chosenfunc == 'poly':
+    func2read, func2fit = norder2dpoly(n)             # nth order 2d Polynomial
+elif chosenfunc == 'cheb':
+    func2read, func2fit = norder2dcheb(nx, ny)        # nx th and ny th order 2d Chebyshev Polynomial
+elif chosenfunc == 'leg':
+    func2read, func2fit = norder2dlegendre(nx, ny)    # nx th and ny th order 2d Legendre Polynomial
 
-nx = ny = n
-func2read, func2fit = norder2dcheb(nx, ny)        # nx th and ny th order 2d Chebyshev Polynomial
-
-#func2read, func2fit = norder2dlegendre(nx, ny)   # nx th and ny th order 2d Legendre Polynomial
-SCALE2ONE = True
 print 'Function that is being fit:', func2read
-funcname = 'cheb' + '2d'
 
 ###########################################
 ########### Initial Conditions ############
@@ -241,7 +212,7 @@ def getfit(tab, func2fit):
 
     x = np.asarray(tab['x'])
     y = np.asarray(tab['y'])
-    z = np.asarray((tab[SPACE_VAL] - tab['avg' + SPACE_VAL]) / tab['avg' + SPACE_VAL])       # normalized delta flux
+    z = np.asarray((tab['flux'] - tab['avgflux']) / tab['avgflux'])       # normalized delta flux
     if SCALE2ONE:
         x = (x - CHIPXLEN/2)/(CHIPXLEN/2)
         y = (y - CHIPYLEN/2)/(CHIPYLEN/2)
@@ -269,9 +240,6 @@ x, y, z, zfit, coeff, rsum, resarr = getfit(tab, func2fit)
 
 initialcoeff = np.zeros(len(func2read))
 initialcoeff[0] = 1
-a = .000001
-realcoeff = [0, a ,a, a, -a, a]
-#initialcoeff = realcoeff
 print 'Initial Coefficients:'
 print initialcoeff
 ###########################################
@@ -289,8 +257,8 @@ def chisqstar(starrows, p):
         ''' Worker function '''
         # Input is the rows of the table corresponding to a single star so that we don't need to input a whole table
         #starrows, p = inputs
-        starvals = starrows[SPACE_VAL]
-        starvalerrs = starrows[SPACE_VAL + 'err']
+        starvals = starrows['flux']
+        starvalerrs = starrows['fluxerr']
         func = lambda p, x, y: np.sum(func2fit(x,y) * np.asarray(p))     # The 'delta' function
         if SCALE2ONE:
             fits = [func(p, (row['x']-CHIPXLEN/2)/(CHIPXLEN/2), (row['y']-CHIPYLEN/2)/(CHIPYLEN/2)) for row in starrows]
@@ -299,18 +267,7 @@ def chisqstar(starrows, p):
         avgf = np.mean(starvals/fits)                                  # Our 'expected' value for the Flux
         starresid = (starvals/fits - avgf)/(starvalerrs/fits)          # Currently an Astropy Column
         return np.asarray(starresid).tolist()                          # Want to return as list so it is possible to flatten totalresid
-
-def chisqstar2(starx,stary,starflux,starfluxerr,p):
-        ''' Worker function '''
-        # TESTING FUNCITON : inputs are starx,stary,starflux,starfluxerr,params INSTEAD of rows of a tabl
-        # Created this function to test speed difference between unraveling the data in the worker function
-        #       versus in the bigger function (Found there is a little difference and probably not worth it)
-        func = lambda p, x, y: np.sum(func2fit(x,y) * np.asarray(p))
-        fits = [func(p,i,j) for i,j in zip(starx,stary)]
-        avgf = np.mean(starflux/fits)
-        starresid = (starflux/fits - avgf)/(starfluxerr/fits) # currently an Astropy Column
-        return np.asarray(starresid).tolist()
-        
+ 
 def chisqall(params, tab, num_cpu = 4):
     starIDarr = np.unique(tab['id'])
 
@@ -333,31 +290,14 @@ def chisqall(params, tab, num_cpu = 4):
     #return totalresid
     ########## 
     
-    ##########  Doing it by unwrapping the information first instead of in the worker function
-    #totalresid = np.array([])
-    #for star in stars2consid:
-    #    starrows = tab[np.where(tab['id'] == star)[0]]
-    #    starx = np.asarray(starrows['x'])
-    #    stary = np.asarray([row['y'] if row['chip'] == 2 else row['y'] + CHIP2YLEN for row in starrows])
-    #    starflux = np.asarray(starrows['flux'])
-    #    starfluxerr = np.asarray(starrows['fluxerr'])
-    #    totalresid = np.append(totalresid, chisqstar2(starx,stary,starflux,starfluxerr,params))
-    #return totalresid
-    ########## 
-    
     ##########  Doing it the original way
     # np.where(tab['id'] == star)[0]                -- the indexes in tab where a star is located
     # tab[np.where(tab['id'] == star)[0]]           -- "starrows" = the rows of tab for a certain star
     # chisqstar(tab[np.where(tab['id'] == star)[0]])-- the chi squared for just one star
-    #totalsum = np.sum([chisqstar(tab[np.where(tab['id'] == star)[0]]) for star in starIDarr])
     totalresid = np.asarray([chisqstar(tab[np.where(tab['id'] == star)[0]], params) for star in starIDarr])     # an array of different sized lists
     totalresid = reduce(lambda x, y: x + y, totalresid)                                 # flatten totalresid        
-    global randomchisq
-    sqsums = np.sum(np.asarray(totalresid)**2)
-    randomchisq = np.append(randomchisq, sqsums)
     return totalresid
     ########## 
-randomchisq = np.array([])
 start_time = time.time()  
 
 # Reduce the Table so that it doesn't have unused Columns that take up memory/time
@@ -365,22 +305,96 @@ tabreduced = np.copy(tab)
 tabreduced = Table(tabreduced)
 tabreduced.remove_columns(['avgmag', 'avgmagerr', 'avgflux','avgfluxerr'])
 
-maxfev = 1400
-count = 0
-print 'Starting Least Square Fit'
-result = op.leastsq(chisqall, initialcoeff, args = (tabreduced), maxfev = maxfev)
+
+########## Using op.leastsq
+#maxfev = 1400
+#count = 0
+#print 'Starting Least Square Fit'
+#result = op.leastsq(chisqall, initialcoeff, args = (tabreduced), maxfev = maxfev)
+#print 'Count: ', count
+##########
+
+
+########## Using op.minimize / set up for MCMC
+#f = .1
+#def lnlike(params, x, y, z, zerr):
+#    #realparams, lnf = params[:-1], params[-1]
+#    realparams = params
+#    #x = np.asarray(tab['x'])
+#    #y = np.asarray(tab['y'])
+#    #z = np.asarray((tab['flux'] - tab['avgflux']) / tab['avgflux'])
+#    #zerr = get_normdelerr(tab)
+#    
+#    #if SCALE2ONE:
+#    #    x = (x-CHIPXLEN/2)/(CHIPXLEN/2)
+#    #    y = (y-CHIPYLEN/2)/(CHIPYLEN/2)  
+#    x = np.asarray(x)
+#    y = np.asarray(y)
+#    z = np.asarray(z)
+#    zerr = np.asarray(zerr)
+#    
+#
+#     
+#    model = np.array([])
+#    for xi, yi in zip(x,y):
+#        currfuncvals = func2fit(xi,yi)
+#        model = np.append(model, np.sum(currfuncvals * realparams))    
+#    inv_sigma2 = 1.0/(zerr**2) # + model**2*np.exp(2*lnf))
+#    some = -0.5*(np.sum((z-model)**2*inv_sigma2 - np.log(inv_sigma2)))
+#    print '***'
+#    #print realparams
+#    #print model
+#    #print z
+#    #print zerr
+#    #
+#    #print lnf
+#    #print inv_sigma2
+#    print some
+#    return some
+#
+#import scipy.optimize as op
+#initialcoeff = np.zeros(len(func2read))
+#initialcoeff[0] = 1
+##initialcoeff[-1] = np.log(f)
+#nll = lambda *args: -lnlike(*args)
+#
+#def get_normdelerr(tab):
+#    val = np.asarray(tab['flux'])
+#    valerr = np.asarray(tab['fluxerr'])
+#    avgval = np.asarray(tab['avgflux'])
+#    avgvalerr = np.asarray(tab['avgfluxerr'])
+#    
+#    n = val - valerr
+#    d = valerr
+#    dn = np.sqrt(valerr**2 + avgvalerr**2)
+#    r = np.abs((val-avgval)/avgval)
+#    dr = r * np.sqrt((dn/n)**2 + (avgvalerr/avgval)**2)
+#    return dr
+#
+#num = len(tab)
+#x = tab['x'][:num]
+#y = tab['y'][:num]
+#if SCALE2ONE:
+#    x = (x-CHIPXLEN/2)/(CHIPXLEN/2)
+#    y = (y-CHIPYLEN/2)/(CHIPYLEN/2)
+#z = (tab['flux'][:num] - tab['avg'+SPACE_VAL][:num]) / tab['avg'+'flux'][:num]
+#zerr = get_normdelerr(tab[:num])
+#
+##num = 100
+##tab = tab[:num]
+#result = op.minimize(nll, initialcoeff, args = (x,y,z,zerr))
+##########
+
 end_time = time.time()
 print "%s seconds for fitting the data going through each star" % (end_time - start_time)
-
 try:
     finalcoeff = result[0]
 except KeyError:
-    finalcoeff = result.x
+    finalcoeff = result.x[:]
     
 #finalcoeff = initialcoeff
 print 'Final Coefficients:'
 print finalcoeff
-print 'Count: ', count
 
 ###########################################
 ###########################################
@@ -426,7 +440,7 @@ def do_bin(tab, xbin = XBIN, ybin = YBIN):
     """
     xall = np.asarray(tab['x'])
     yall = np.asarray(tab['y'])
-    delfluxall = np.asarray((tab[SPACE_VAL] - tab['avg'+SPACE_VAL]) / tab['avg'+SPACE_VAL]) # normalized
+    delfluxall = np.asarray((tab['flux'] - tab['avgflux']) / tab['avgflux']) # normalized
     
     # Initialize an empty 2D array for the binning;
     # Create xbinarr and ybinarr as the (lengths of xbin and ybin, respectively);
@@ -479,7 +493,7 @@ zzorig, zznum, zzavg = do_bin(tab)
 ############### Integrate #################
 ###########################################
 
-def funcintegrate(x, y, coeff=finalcoeff):
+def funcintegrate(x, y, coeff):
     return np.sum(func2fit(x, y) * coeff)
 
 from scipy import integrate
@@ -495,7 +509,7 @@ def bounds_x():
         return [0, CHIPXLEN]
 def area():
     return np.sum(np.abs(bounds_y() + bounds_x()))
-integrate_result = integrate.nquad(funcintegrate, [bounds_x(), bounds_y()])[0]   
+integrate_result = integrate.nquad(funcintegrate, [bounds_x(), bounds_y()], args = (finalcoeff,))[0]   
 integrate_result /= area()
 finalcoeff /= integrate_result
 
@@ -572,8 +586,8 @@ def plotall(tab, a, lim, title = ''):
 #plt.show(plotall(tab, convert2mesh(func2fit, coeff=initialcoeff), lim = .05, title = 'Initial: ' + str(funcname) + ' n = ' + str(n)))
 #plt.show(plotall(tab, convert2mesh(func2fit, coeff=finalcoeff), lim = .05, title = 'Final: ' + str(funcname) + ' n = ' + str(n)))
    
-def plotimg(img, title = '', fitplot = False):
-    fig = plt.figure()
+def plotimg(img, title = '', fitplot = False, facecolor='white'):
+    fig = plt.figure(facecolor=facecolor)
     ax = fig.add_subplot(111)
     ax.set_title(title)
     ax.set_xlabel('X Pixel', fontsize = 18);  ax.set_ylabel('Y Pixel', fontsize = 18)
@@ -596,40 +610,16 @@ def plotimg(img, title = '', fitplot = False):
         fig.colorbar(cax, fraction=0.046, pad=0.04)
     return fig
     
-plt.show(plotimg(zznum, title = 'Number of Observations in a Bin (' + SPACE_VAL + ')'))
-plt.show(plotimg(zzavg, title = 'Normalized Delta ' + SPACE_VAL + ' Binned'))
+plt.show(plotimg(zznum, title = 'Number of Observations in a Bin'))
+plt.show(plotimg(zzavg, title = 'Normalized Delta Fluxes Binned'))
 
 #zzfitinitial = convert2mesh(func2fit, coeff=initialcoeff, xpixel = np.double(range(int(CHIPXLEN))), ypixel = np.double(range(int(CHIPYLEN))))[2]      # convert2mesh returns [xx, yy, zzfit]
-#imginitial = plotimg(zzfitinit, title = 'Initial: ' + str(funcname) + ' n = ' + str(n), fitplot = True)
+#imginitial = plotimg(zzfitinitial, title = 'Initial: ' + str(funcname) + ' n = ' + str(n), fitplot = True)
 #plt.show(imginitial)
 
 zzfitfinal = convert2mesh(func2fit, coeff=finalcoeff, xpixel = np.double(range(int(CHIPXLEN))), ypixel = np.double(range(int(CHIPYLEN))))[2]      # convert2mesh returns [xx, yy, zzfit]
 imgfinal = plotimg(zzfitfinal, title = 'Final: ' + str(funcname) + ' n = ' + str(n), fitplot = True)
 plt.show(imgfinal)
-
-def something(chisqfn, initialcoeff, finalcoeff, num=20):
-    # need tabreduced
-    diffarr = np.array([])
-    for init, fin in zip(initialcoeff, finalcoeff):
-        diffarr = np.append(diffarr, (init-fin)/np.double(num))
-    
-    chisqarr = np.array([])
-    coeffarr = []
-    for i in range(num*2 + 1):
-        tempcoeff = initialcoeff - diffarr * i
-        tempchisq = np.sum(np.asarray(chisqfn(tempcoeff, tabreduced))**2)
-        chisqarr = np.append(chisqarr, tempchisq)
-        coeffarr.append(tempcoeff)
-    return [range(len(chisqarr)), chisqarr, coeffarr]
-    
-############### If we want to make sure the final coefficients are the minimum
-############### by making a chi squared path from the initial coeff to the final coeff
-############### and then going past the final coeff
-#somex, somey, coeffarr = something(chisqall, initialcoeff, finalcoeff)
-#fig = plt.figure()
-#plt.plot(somex,somey,'o')
-#plt.show()
-###############
 
 finalfunc = lambda p, x, y: np.sum(func2fit(x,y) * np.asarray(p))     # The final flat
 
@@ -672,20 +662,20 @@ simple3dplot(tab, (final - tab['avg'+SPACE_VAL])/tab['avg'+SPACE_VAL], title = '
 ###############
 
 ############### If we want to see/plot the mean of each star before and after applying the flat
-for star in np.unique(tab['id']):
-    starrows = tab[np.where(tab['id']==star)[0]]
-    finalstar = apply_flat(starrows, finalcoeff, SPACE_VAL)
-    mean_before = np.mean(starrows[SPACE_VAL])
-    std_before = np.std(starrows[SPACE_VAL])
-    mean_after = np.mean(finalstar)
-    std_after = np.std(finalstar)
-    print '***' + str(star)
-    print mean_before , np.max(starrows[SPACE_VAL]) - np.min(starrows[SPACE_VAL])
-    print std_before
-    print (np.max(starrows[SPACE_VAL]) - np.min(starrows[SPACE_VAL])) / mean_before
-    print mean_after, np.max(finalstar) - np.min(finalstar)
-    print std_after
-    print (np.max(finalstar) - np.min(finalstar)) / mean_after
+#for star in np.unique(tab['id']):
+#    starrows = tab[np.where(tab['id']==star)[0]]
+#    finalstar = apply_flat(starrows, finalcoeff, SPACE_VAL)
+#    mean_before = np.mean(starrows[SPACE_VAL])
+#    std_before = np.std(starrows[SPACE_VAL])
+#    mean_after = np.mean(finalstar)
+#    std_after = np.std(finalstar)
+#    print '***' + str(star)
+#    print 'mean, max-min before', mean_before , np.max(starrows[SPACE_VAL]) - np.min(starrows[SPACE_VAL])
+#    print 'std before\t', std_before
+#    print 'max-min/mean before', (np.max(starrows[SPACE_VAL]) - np.min(starrows[SPACE_VAL])) / mean_before
+#    print 'mean, max-min after', mean_after, np.max(finalstar) - np.min(finalstar)
+#    print 'std after\t', std_after
+#    print 'max-min/mean after', (np.max(finalstar) - np.min(finalstar)) / mean_after
     #simple3dplot(starrows, starrows[SPACE_VAL], title = 'Original ' + str(star) + ' ' + str(mean_before) + ', ' + str(std_before))
     #simple3dplot(starrows, finalstar, title = 'Final ' + str(star) + ' ' + str(mean_after) + ', ' + str(std_after))
 ############### 
@@ -694,12 +684,81 @@ for star in np.unique(tab['id']):
 ################ Misc. ####################
 ###########################################
 
-############### If we want to see where each star lies on the detector
+############### If we want to see where each star lies on the detector ( imshow style )
 #for star in np.unique(tab['id']):
 #    tabstar = tab[np.where(tab['id'] ==star)[0]]
 #    zzorig, zznum, zzavg = do_bin(tabstar, 30, 30)
 #    plt.show(plotimg(zznum, title = 'Number of Observations in a Bin for star #' + str(star)))
 ###############    
+
+############### If we want to see where each star lies on the detector ( plot style )
+#for star in np.unique(tab['id'])[:10]:
+#    tabstar = tab[np.where(tab['id'] ==star)[0]]
+#    fig = plt.figure()
+#    plt.scatter(tabstar['x'], tabstar['y'], s=50)
+#    plt.xlim([0,CHIPXLEN])
+#    plt.ylim([0,CHIPYLEN])
+#    plt.grid(True)
+#    plt.title('Observation Locations for Star #' + str(star), fontsize = 18)
+#    plt.xticks(np.linspace(0, CHIPXLEN, 9))
+#    plt.yticks(np.linspace(0, CHIPYLEN, 9))
+#    plt.xlabel('X Pixel', fontsize = 18)
+#    plt.ylabel('Y Pixel', fontsize = 18)
+#    plt.show()
+###############   
+
+############### If we want to see where each star lies on the detector for multiple stars ( plot style )
+#def plotnumobs(num, cmap = 'viridis', leg = True):
+#    # num : number of stars you want to plot
+#    fig = plt.figure()
+#    plt.xlim([0,CHIPXLEN])
+#    plt.ylim([0,CHIPYLEN])
+#    plt.grid(True)
+#    plt.title('Observation Locations for ' + str(num) + ' Stars', fontsize = 18)
+#    plt.xticks(np.linspace(0, CHIPXLEN, 9))
+#    plt.yticks(np.linspace(0, CHIPYLEN, 9))
+#    plt.xlabel('X Pixel', fontsize = 18)
+#    plt.ylabel('Y Pixel', fontsize = 18)
+#    cmap = plt.get_cmap(cmap)
+#    colors = [cmap(i) for i in np.linspace(0, 1, num)]
+#    chosen = np.random.choice(len(np.unique(tab['id'])), num, replace = False)
+#    for col, star in zip(colors, chosen):
+#        tabstar = tab[np.where(tab['id'] ==star)[0]]
+#        plt.scatter(tabstar['x'], tabstar['y'], s=10, c=col, marker='*', label = star)
+#    if leg:
+#        plt.legend(loc='best')
+#    return fig
+#plt.show(plotnumobs(num = 5, cmap = 'gnuplot'))
+###############   
+
+############### If we want to see where each star lies on the detector for multiple stars ( plot style )
+#def plotnumobsGIF(num, cmap = 'jet', tab = tab):
+#    # num : number of stars you want to plot
+#    fig = plt.figure()
+#    plt.xlim([0,CHIPXLEN])
+#    plt.ylim([0,CHIPYLEN])
+#    plt.grid(True)
+#    plt.title('Observation Locations', fontsize = 18)
+#    plt.xticks(np.linspace(0, CHIPXLEN, 9))
+#    plt.yticks(np.linspace(0, CHIPYLEN, 9))
+#    plt.xlabel('X Pixel', fontsize = 18)
+#    plt.ylabel('Y Pixel', fontsize = 18)
+#    cmap = plt.get_cmap(cmap)
+#    stars = np.unique(tab['id'])
+#    colors = [cmap(i) for i in np.linspace(0, 1, len(stars))]
+#    for col, star in zip(colors[:num], stars[:num]):
+#        tabstar = tab[np.where(tab['id'] == star)[0]]
+#        plt.scatter(tabstar['x'], tabstar['y'], s=100, c=col, marker='*', lw=0.2)
+#    return fig
+#plt.show(plotnumobsGIF(num = 33, cmap = 'jet'))
+#
+#length = len(np.unique(tab['id']))
+##length = 2
+#for i in range(length) + np.ones(length):
+#    i = int(i)
+#    plt.show(plotnumobsGIF(num = i, cmap = 'jet'))
+#    #plotnumobsGIF(num=i, cmap='jet').savefig('/Users/dkossakowski/Desktop/FinalPresentation/DitheringGIF/Stars/NumObs' + str(i) + '.png', dpi = 500)
+############### 
 
 ############### If we want to smooth out the normalized delta flux
 #import scipy.signal as signal
